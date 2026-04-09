@@ -1,0 +1,59 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: healthlink-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build:
+      context: ./auth-service
+    image: healthlink-auth-service:local
+    container_name: healthlink-auth-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    env_file:
+      - ./auth-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+
+  appointment-service:
+    build:
+      context: ./appointment-service
+    image: healthlink-appointment-service:local
+    container_name: healthlink-appointment-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    ports:
+      - "4001:4001"
+    env_file:
+      - ./appointment-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4001
+      ALLOW_DOCTOR_FALLBACK: "true"
+      # If these services run on host machine, use host.docker.internal on Windows/Mac.
+      DOCTOR_SERVICE_URL: http://host.docker.internal:3003
+      PAYMENT_SERVICE_URL: http://host.docker.internal:3004
+      NOTIFICATION_SERVICE_URL: http://host.docker.internal:3005
+      REQUEST_TIMEOUT_MS: 5000
+
+volumes:
+  mongo_data:
