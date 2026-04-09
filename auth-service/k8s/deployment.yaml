@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  labels:
+    app: auth-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: healthlink-auth-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "4000"
+            - name: ACCESS_TOKEN_EXPIRES_IN
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: ACCESS_TOKEN_EXPIRES_IN
+            - name: REFRESH_TOKEN_EXPIRES_IN
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: REFRESH_TOKEN_EXPIRES_IN
+            - name: CORS_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: CORS_ORIGIN
+            - name: BCRYPT_SALT_ROUNDS
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: BCRYPT_SALT_ROUNDS
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: auth-service-secret
+                  key: MONGODB_URI
+            - name: JWT_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-service-secret
+                  key: JWT_ACCESS_SECRET
+            - name: JWT_REFRESH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-service-secret
+                  key: JWT_REFRESH_SECRET
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 20
+            periodSeconds: 20
