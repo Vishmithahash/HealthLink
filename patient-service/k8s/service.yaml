@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: patient-service
+  labels:
+    app: patient-service
+spec:
+  selector:
+    app: patient-service
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 4003
+  type: ClusterIP
