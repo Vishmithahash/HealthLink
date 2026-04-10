@@ -49,11 +49,55 @@ services:
       NODE_ENV: development
       PORT: 4001
       ALLOW_DOCTOR_FALLBACK: "true"
-      # If these services run on host machine, use host.docker.internal on Windows/Mac.
-      DOCTOR_SERVICE_URL: http://host.docker.internal:3003
+      DOCTOR_SERVICE_URL: http://doctor-service:4002
       PAYMENT_SERVICE_URL: http://host.docker.internal:3004
       NOTIFICATION_SERVICE_URL: http://host.docker.internal:3005
       REQUEST_TIMEOUT_MS: 5000
+
+  doctor-service:
+    build:
+      context: ./doctor-service
+    image: healthlink-doctor-service:local
+    container_name: healthlink-doctor-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "4002:4002"
+    env_file:
+      - ./doctor-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4002
+      MONGODB_URI: mongodb://mongo:27017/doctor-db
+      JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
+      APPOINTMENT_SERVICE_URL: http://appointment-service:4001
+      PATIENT_SERVICE_URL: http://patient-service:4003
+      TELEMEDICINE_SERVICE_URL: http://host.docker.internal:4004
+      NOTIFICATION_SERVICE_URL: http://host.docker.internal:4005
+      REQUEST_TIMEOUT_MS: 5000
+
+  patient-service:
+    build:
+      context: ./patient-service
+    image: healthlink-patient-service:local
+    container_name: healthlink-patient-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "4003:4003"
+    env_file:
+      - ./patient-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4003
+      MONGODB_URI: mongodb://mongo:27017/patient-db
+      JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
+      CORS_ORIGIN: http://localhost:3000
+      MAX_REPORT_SIZE_MB: 10
 
 volumes:
   mongo_data:
