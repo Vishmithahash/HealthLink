@@ -134,15 +134,22 @@ const getHeaders = (authHeader) => ({
 });
 
 const registerDoctor = async ({ payload, actor }) => {
-  const required = ["userId", "fullName", "specialization", "licenseNumber"];
+  const required = ["userId", "fullName", "specialization"];
   const missing = required.filter((key) => !payload[key]);
 
   if (missing.length > 0) {
     throw new ServiceError(400, `Missing required fields: ${missing.join(", ")}`);
   }
 
+  const normalizedLicense = payload.licenseNumber ? String(payload.licenseNumber).trim().toUpperCase() : null;
+
+  const duplicateFilters = [{ userId: String(payload.userId) }];
+  if (normalizedLicense) {
+    duplicateFilters.push({ licenseNumber: normalizedLicense });
+  }
+
   const exists = await Doctor.findOne({
-    $or: [{ userId: payload.userId }, { licenseNumber: payload.licenseNumber.toUpperCase() }]
+    $or: duplicateFilters
   });
 
   if (exists) {
@@ -150,20 +157,20 @@ const registerDoctor = async ({ payload, actor }) => {
   }
 
   const actorRole = normalizeRole(actor?.role);
-  const isAdmin = actorRole === "admin";
+  const isPrivilegedRequest = actorRole === "admin" || !actor;
 
   const doctor = await Doctor.create({
     userId: String(payload.userId),
     fullName: payload.fullName,
     specialization: payload.specialization,
-    licenseNumber: payload.licenseNumber,
+    licenseNumber: normalizedLicense || undefined,
     qualification: payload.qualification || "",
     experienceYears: payload.experienceYears || 0,
     consultationFee: payload.consultationFee || 0,
     workingHours: payload.workingHours || undefined,
     availabilitySlots: Array.isArray(payload.availabilitySlots) ? payload.availabilitySlots : [],
-    status: isAdmin ? payload.status || "active" : "inactive",
-    verified: isAdmin ? Boolean(payload.verified ?? true) : false
+    status: isPrivilegedRequest ? payload.status || "active" : "inactive",
+    verified: isPrivilegedRequest ? Boolean(payload.verified ?? true) : false
   });
 
   return doctor;
@@ -180,6 +187,26 @@ const updateDoctorProfile = async ({ user, payload }) => {
   }
 
   const doctor = await ensureDoctor(user.id);
+
+  if (Object.prototype.hasOwnProperty.call(payload, "licenseNumber")) {
+    const incomingLicense = payload.licenseNumber;
+    const normalizedLicense = incomingLicense ? String(incomingLicense).trim().toUpperCase() : "";
+
+    if (!normalizedLicense) {
+      throw new ServiceError(400, "licenseNumber cannot be empty");
+    }
+
+    const duplicateDoctor = await Doctor.findOne({
+      _id: { $ne: doctor._id },
+      licenseNumber: normalizedLicense
+    });
+
+    if (duplicateDoctor) {
+      throw new ServiceError(409, "licenseNumber is already in use");
+    }
+
+    doctor.licenseNumber = normalizedLicense;
+  }
 
   const allowedFields = [
     "fullName",
@@ -233,18 +260,22 @@ const getAllDoctors = async ({ query, user }) => {
 };
 
 const getDoctorById = async ({ id, user }) => {
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new ServiceError(400, "Invalid doctor id");
+  const searchFilters = [{ userId: String(id) }];
+
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    searchFilters.push({ _id: id });
   }
 
-  const doctor = await Doctor.findById(id);
+  const doctor = await Doctor.findOne({ $or: searchFilters });
 
   if (!doctor) {
     throw new ServiceError(404, "Doctor not found");
   }
 
   const isAdmin = normalizeRole(user?.role) === "admin";
-  if (!isAdmin && (doctor.status !== "active" || !doctor.verified)) {
+  const isOwner = String(user?.id || "") === String(doctor.userId);
+
+  if (!isAdmin && !isOwner && (doctor.status !== "active" || !doctor.verified)) {
     throw new ServiceError(404, "Doctor not found");
   }
 

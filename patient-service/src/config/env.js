@@ -20,5 +20,6 @@ module.exports = {
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || null,
   jwtSecret: process.env.JWT_SECRET || null,
   corsOrigin: process.env.CORS_ORIGIN || "*",
+  internalServiceApiKey: process.env.INTERNAL_SERVICE_API_KEY || "healthlink-internal-key",
   maxReportSizeMb: Number(process.env.MAX_REPORT_SIZE_MB || 10)
 };

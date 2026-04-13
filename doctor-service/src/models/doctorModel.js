@@ -79,8 +79,8 @@ const doctorSchema = new mongoose.Schema(
     },
     licenseNumber: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true,
       trim: true,
       uppercase: true,
       index: true

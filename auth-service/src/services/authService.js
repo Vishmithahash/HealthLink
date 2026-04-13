@@ -1,6 +1,7 @@
 const bcrypt = require("bcrypt");
 const User = require("../models/User");
 const ApiError = require("../utils/ApiError");
+const env = require("../config/env");
 const {
   generateAccessToken,
   generateRefreshToken,
@@ -23,6 +24,77 @@ const DOCTOR_SPECIALTIES = [
   "ENT Specialist",
   "Ophthalmologist"
 ];
+
+const parseJsonSafely = async (response) => {
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+const callProfileService = async ({ serviceName, url, payload }) => {
+  let response;
+
+  if (typeof globalThis.fetch !== "function") {
+    throw new ApiError(500, "Server runtime does not support fetch API");
+  }
+
+  const timeoutSignal =
+    globalThis.AbortSignal && typeof globalThis.AbortSignal.timeout === "function"
+      ? globalThis.AbortSignal.timeout(env.requestTimeoutMs)
+      : undefined;
+
+  try {
+    response = await globalThis.fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-api-key": env.internalServiceApiKey
+      },
+      body: JSON.stringify(payload),
+      signal: timeoutSignal
+    });
+  } catch (error) {
+    throw new ApiError(502, `${serviceName} service is not reachable`);
+  }
+
+  const body = await parseJsonSafely(response);
+
+  if (!response.ok) {
+    const message = body?.message || `Failed to create ${serviceName} profile`;
+    throw new ApiError(response.status >= 500 ? 502 : response.status, message);
+  }
+
+  return body?.data || body;
+};
+
+const provisionProfileForUser = async (user) => {
+  const userId = user._id.toString();
+
+  if (user.role === "Doctor") {
+    await callProfileService({
+      serviceName: "Doctor",
+      url: `${env.doctorServiceUrl}/api/doctors/register`,
+      payload: {
+        userId,
+        fullName: user.fullName,
+        specialization: user.specialty
+      }
+    });
+  }
+
+  if (user.role === "patient") {
+    await callProfileService({
+      serviceName: "Patient",
+      url: `${env.patientServiceUrl}/api/patients/register`,
+      payload: {
+        userId,
+        fullName: user.fullName
+      }
+    });
+  }
+};
 
 const issueTokensForUser = async (user) => {
   const accessToken = generateAccessToken(user);
@@ -95,6 +167,13 @@ const register = async ({ fullName, nic, phoneNumber, username, email, password,
     role: resolvedRole,
     specialty: resolvedRole === "Doctor" ? specialty.trim() : null
   });
+
+  try {
+    await provisionProfileForUser(user);
+  } catch (error) {
+    await User.deleteOne({ _id: user._id });
+    throw error;
+  }
 
   const userWithSecrets = await User.findById(user._id).select("+passwordHash +refreshTokenHash");
   const tokens = await issueTokensForUser(userWithSecrets);

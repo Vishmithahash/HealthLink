@@ -1,8 +1,9 @@
 const express = require("express");
 const { body, param } = require("express-validator");
 const patientController = require("../controllers/patientController");
-const { protect, optionalProtect } = require("../middlewares/authMiddleware");
+const { protect } = require("../middlewares/authMiddleware");
 const { authorize } = require("../middlewares/roleMiddleware");
+const { internalOnly } = require("../middlewares/internalAuthMiddleware");
 const validateRequest = require("../middlewares/validateRequest");
 const { upload } = require("../middlewares/uploadMiddleware");
 
@@ -10,7 +11,7 @@ const router = express.Router();
 
 router.post(
   "/register",
-  optionalProtect,
+  internalOnly,
   [
     body("userId").notEmpty().withMessage("userId is required").isString(),
     body("fullName")
@@ -38,9 +39,12 @@ router.put(
     body("fullName").optional().isLength({ min: 3, max: 140 }),
     body("dob").optional().isISO8601().withMessage("dob must be a valid date"),
     body("gender").optional().isIn(["male", "female", "other", "prefer_not_to_say"]),
+    body("phone").optional().isString(),
+    body("address").optional().isString(),
     body("bloodGroup").optional().isIn(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "UNKNOWN"]),
     body("medicalHistory").optional().isArray(),
     body("allergies").optional().isArray(),
+    body("emergencyContact").optional().isObject(),
     validateRequest
   ],
   patientController.updateMyProfile
