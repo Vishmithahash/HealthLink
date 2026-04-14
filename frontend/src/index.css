@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --hl-ink: #0f172a;
+  --hl-soft: #f1f5f9;
+  --hl-accent: #0f766e;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Trebuchet MS", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: radial-gradient(circle at 10% 0%, #e6fffa 0%, #f8fafc 45%, #eef2ff 100%);
+  color: var(--hl-ink);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.animate-fade-in {
+  animation: fadeIn 260ms ease-out both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
