@@ -21,7 +21,16 @@ router.post(
       .withMessage("fullName must be between 3 and 140 characters"),
     body("dob").optional().isISO8601().withMessage("dob must be a valid date"),
     body("gender").optional().isIn(["male", "female", "other", "prefer_not_to_say"]),
+    body("nic")
+      .optional()
+      .isString()
+      .bail()
+      .matches(/^[A-Za-z0-9-]{10,20}$/)
+      .withMessage("nic must be 10 to 20 characters and can contain only letters, numbers, and hyphen"),
+    body("username").optional().isString().isLength({ min: 3, max: 40 }),
+    body("email").optional().isEmail().withMessage("email must be valid"),
     body("phone").optional().isString(),
+    body("phoneNumber").optional().isString(),
     body("address").optional().isString(),
     body("bloodGroup").optional().isIn(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "UNKNOWN"]),
     validateRequest
@@ -37,6 +46,41 @@ router.put(
   authorize("patient"),
   [
     body("fullName").optional().isLength({ min: 3, max: 140 }),
+    body("nic")
+      .optional()
+      .isString()
+      .bail()
+      .matches(/^[A-Za-z0-9-]{10,20}$/)
+      .withMessage("nic must be 10 to 20 characters and can contain only letters, numbers, and hyphen"),
+    body("username").optional().isString().isLength({ min: 3, max: 40 }),
+    body("email").optional().isEmail().withMessage("email must be valid"),
+    body("dob").optional().isISO8601().withMessage("dob must be a valid date"),
+    body("gender").optional().isIn(["male", "female", "other", "prefer_not_to_say"]),
+    body("phone").optional().isString(),
+    body("address").optional().isString(),
+    body("bloodGroup").optional().isIn(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "UNKNOWN"]),
+    body("medicalHistory").optional().isArray(),
+    body("allergies").optional().isArray(),
+    body("emergencyContact").optional().isObject(),
+    validateRequest
+  ],
+  patientController.updateMyProfile
+);
+
+router.patch(
+  "/profile",
+  protect,
+  authorize("patient"),
+  [
+    body("fullName").optional().isLength({ min: 3, max: 140 }),
+    body("nic")
+      .optional()
+      .isString()
+      .bail()
+      .matches(/^[A-Za-z0-9-]{10,20}$/)
+      .withMessage("nic must be 10 to 20 characters and can contain only letters, numbers, and hyphen"),
+    body("username").optional().isString().isLength({ min: 3, max: 40 }),
+    body("email").optional().isEmail().withMessage("email must be valid"),
     body("dob").optional().isISO8601().withMessage("dob must be a valid date"),
     body("gender").optional().isIn(["male", "female", "other", "prefer_not_to_say"]),
     body("phone").optional().isString(),
@@ -119,6 +163,14 @@ router.delete(
   authorize("patient", "admin"),
   [param("reportId").isMongoId().withMessage("reportId must be a valid Mongo ID"), validateRequest],
   patientController.deleteReport
+);
+
+router.get(
+  "/by-user/:id",
+  protect,
+  authorize("patient", "admin", "doctor"),
+  [param("id").notEmpty().isString(), validateRequest],
+  patientController.getPatientById
 );
 
 router.get(

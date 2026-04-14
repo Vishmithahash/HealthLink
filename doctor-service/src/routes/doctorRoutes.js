@@ -29,6 +29,7 @@ router.get("/", optionalProtect, getAllDoctors);
 // Protected routes
 router.get("/profile", protect, authorize("doctor", "admin"), getDoctorProfile);
 router.put("/profile", protect, authorize("doctor"), updateDoctorProfile);
+router.patch("/profile", protect, authorize("doctor"), updateDoctorProfile);
 router.put("/availability", protect, authorize("doctor"), updateAvailability);
 router.get("/appointments", protect, authorize("doctor"), getDoctorAppointments);
 router.patch("/appointments/:id/accept", protect, authorize("doctor"), acceptAppointment);
@@ -42,6 +43,8 @@ router.put("/prescriptions/:id", protect, authorize("doctor"), updatePrescriptio
 
 router.patch("/:id/status", protect, authorize("admin"), updateDoctorStatus);
 router.patch("/:id/verify", protect, authorize("admin"), verifyDoctor);
+
+router.get("/by-user/:id", optionalProtect, getDoctorById);
 
 // Keep this dynamic route last to avoid matching static paths.
 router.get("/:id", optionalProtect, getDoctorById);

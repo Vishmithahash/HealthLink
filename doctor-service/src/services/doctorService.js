@@ -13,6 +13,9 @@ class ServiceError extends Error {
 }
 
 const normalizeRole = (role) => String(role || "").trim().toLowerCase();
+const normalizeIdentifier = (value) => String(value || "").trim().toLowerCase();
+const normalizeNic = (value) => String(value || "").trim().toUpperCase();
+const normalizePhone = (value) => String(value || "").trim();
 
 const requestClient = axios.create({
   timeout: env.requestTimeoutMs
@@ -28,6 +31,54 @@ const asData = (response) => {
   }
 
   return response.data;
+};
+
+const parseJsonSafely = async (response) => {
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+const syncAuthUserProfile = async ({ userId, payload }) => {
+  if (!payload || Object.keys(payload).length === 0) {
+    return;
+  }
+
+  if (typeof globalThis.fetch !== "function") {
+    throw new ServiceError(500, "Server runtime does not support fetch API");
+  }
+
+  let response;
+  const timeoutSignal =
+    globalThis.AbortSignal && typeof globalThis.AbortSignal.timeout === "function"
+      ? globalThis.AbortSignal.timeout(env.requestTimeoutMs)
+      : undefined;
+
+  try {
+    response = await globalThis.fetch(
+      `${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}/profile`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-api-key": env.internalServiceApiKey
+        },
+        body: JSON.stringify(payload),
+        signal: timeoutSignal
+      }
+    );
+  } catch (error) {
+    throw new ServiceError(502, "Auth service is not reachable");
+  }
+
+  const body = await parseJsonSafely(response);
+
+  if (!response.ok) {
+    const message = body?.message || "Failed to sync user identity data";
+    throw new ServiceError(response.status >= 500 ? 502 : response.status, message, body?.details || null);
+  }
 };
 
 const mapAxiosError = (error, fallbackMessage) => {
@@ -162,6 +213,10 @@ const registerDoctor = async ({ payload, actor }) => {
   const doctor = await Doctor.create({
     userId: String(payload.userId),
     fullName: payload.fullName,
+    nic: payload.nic ? normalizeNic(payload.nic) : "",
+    username: payload.username ? normalizeIdentifier(payload.username) : "",
+    email: payload.email ? normalizeIdentifier(payload.email) : "",
+    phoneNumber: payload.phoneNumber ? normalizePhone(payload.phoneNumber) : "",
     specialization: payload.specialization,
     licenseNumber: normalizedLicense || undefined,
     qualification: payload.qualification || "",
@@ -188,6 +243,34 @@ const updateDoctorProfile = async ({ user, payload }) => {
 
   const doctor = await ensureDoctor(user.id);
 
+  const authPayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload, "fullName")) {
+    authPayload.fullName = payload.fullName;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "nic")) {
+    authPayload.nic = payload.nic;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "username")) {
+    authPayload.username = payload.username;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "email")) {
+    authPayload.email = payload.email;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "phoneNumber")) {
+    authPayload.phoneNumber = payload.phoneNumber;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "specialization")) {
+    authPayload.specialty = payload.specialization;
+  }
+
+  await syncAuthUserProfile({ userId: user.id, payload: authPayload });
+
   if (Object.prototype.hasOwnProperty.call(payload, "licenseNumber")) {
     const incomingLicense = payload.licenseNumber;
     const normalizedLicense = incomingLicense ? String(incomingLicense).trim().toUpperCase() : "";
@@ -210,6 +293,10 @@ const updateDoctorProfile = async ({ user, payload }) => {
 
   const allowedFields = [
     "fullName",
+    "nic",
+    "username",
+    "email",
+    "phoneNumber",
     "specialization",
     "qualification",
     "experienceYears",
@@ -220,7 +307,15 @@ const updateDoctorProfile = async ({ user, payload }) => {
 
   allowedFields.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(payload, field)) {
-      doctor[field] = payload[field];
+      if (field === "username" || field === "email") {
+        doctor[field] = normalizeIdentifier(payload[field]);
+      } else if (field === "nic") {
+        doctor[field] = normalizeNic(payload[field]);
+      } else if (field === "phoneNumber") {
+        doctor[field] = normalizePhone(payload[field]);
+      } else {
+        doctor[field] = payload[field];
+      }
     }
   });
 

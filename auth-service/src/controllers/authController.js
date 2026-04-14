@@ -80,11 +80,29 @@ const validateToken = async (req, res) => {
   });
 };
 
+const updateInternalUserProfile = async (req, res, next) => {
+  try {
+    const user = await authService.updateInternalUserProfile({
+      userId: req.params.userId,
+      payload: req.body
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "User profile updated successfully",
+      data: user
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   register,
   login,
   refresh,
   logout,
   me,
-  validateToken
+  validateToken,
+  updateInternalUserProfile
 };

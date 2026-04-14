@@ -1,8 +1,9 @@
 const express = require("express");
-const { body } = require("express-validator");
+const { body, param } = require("express-validator");
 
 const authController = require("../controllers/authController");
 const authMiddleware = require("../middleware/authMiddleware");
+const { internalOnly } = require("../middleware/internalAuthMiddleware");
 const roleMiddleware = require("../middleware/roleMiddleware");
 const validateRequest = require("../middleware/validateRequest");
 
@@ -115,12 +116,56 @@ const refreshValidation = [
   validateRequest
 ];
 
+const internalUserProfileValidation = [
+  param("userId").isMongoId().withMessage("userId must be a valid Mongo ID"),
+  body("fullName")
+    .optional()
+    .trim()
+    .isLength({ min: 3, max: 120 })
+    .withMessage("fullName must be between 3 and 120 characters"),
+  body("nic")
+    .optional()
+    .trim()
+    .matches(/^[A-Za-z0-9-]{10,20}$/)
+    .withMessage("NIC must be 10 to 20 characters and can contain only letters, numbers, and hyphen"),
+  body("phoneNumber")
+    .optional()
+    .trim()
+    .matches(/^\+?[0-9]{9,15}$/)
+    .withMessage("Phone number must be 9 to 15 digits and may start with +"),
+  body("username")
+    .optional()
+    .trim()
+    .isLength({ min: 3, max: 40 })
+    .withMessage("Username must be between 3 and 40 characters"),
+  body("email")
+    .optional()
+    .trim()
+    .isEmail()
+    .withMessage("Email must be valid"),
+  body("specialty")
+    .optional()
+    .isString()
+    .withMessage("specialty must be a string")
+    .bail()
+    .trim()
+    .isIn(DOCTOR_SPECIALTIES)
+    .withMessage(`specialty must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`),
+  validateRequest
+];
+
 router.post("/register", registerValidation, authController.register);
 router.post("/login", loginValidation, authController.login);
 router.post("/refresh", refreshValidation, authController.refresh);
 router.post("/logout", authMiddleware, authController.logout);
 router.get("/me", authMiddleware, authController.me);
 router.get("/validate-token", authMiddleware, authController.validateToken);
+router.patch(
+  "/internal/users/:userId/profile",
+  internalOnly,
+  internalUserProfileValidation,
+  authController.updateInternalUserProfile
+);
 
 router.get("/patient-only", authMiddleware, roleMiddleware("patient"), (req, res) => {
   return res.status(200).json({

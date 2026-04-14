@@ -79,7 +79,11 @@ const provisionProfileForUser = async (user) => {
       payload: {
         userId,
         fullName: user.fullName,
-        specialization: user.specialty
+        specialization: user.specialty,
+        nic: user.nic,
+        phoneNumber: user.phoneNumber,
+        username: user.username,
+        email: user.email
       }
     });
   }
@@ -90,10 +94,34 @@ const provisionProfileForUser = async (user) => {
       url: `${env.patientServiceUrl}/api/patients/register`,
       payload: {
         userId,
-        fullName: user.fullName
+        fullName: user.fullName,
+        nic: user.nic,
+        phone: user.phoneNumber,
+        username: user.username,
+        email: user.email
       }
     });
   }
+};
+
+const getDuplicateIdentityField = (existingUser, normalized) => {
+  if (normalized.username && existingUser.username === normalized.username) {
+    return "username";
+  }
+
+  if (normalized.email && existingUser.email === normalized.email) {
+    return "email";
+  }
+
+  if (normalized.nic && existingUser.nic === normalized.nic) {
+    return "NIC";
+  }
+
+  if (normalized.phoneNumber && existingUser.phoneNumber === normalized.phoneNumber) {
+    return "phone number";
+  }
+
+  return "identity field";
 };
 
 const issueTokensForUser = async (user) => {
@@ -272,10 +300,91 @@ const getMe = async ({ userId }) => {
   return user.toSafeObject();
 };
 
+const updateInternalUserProfile = async ({ userId, payload }) => {
+  const user = await User.findById(userId);
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  const normalized = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload, "username")) {
+    normalized.username = normalizeIdentifier(payload.username);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "email")) {
+    normalized.email = normalizeIdentifier(payload.email);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "nic")) {
+    normalized.nic = normalizeNic(payload.nic);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "phoneNumber")) {
+    normalized.phoneNumber = normalizePhoneNumber(payload.phoneNumber);
+  }
+
+  const duplicateFilters = [];
+  if (normalized.username) duplicateFilters.push({ username: normalized.username });
+  if (normalized.email) duplicateFilters.push({ email: normalized.email });
+  if (normalized.nic) duplicateFilters.push({ nic: normalized.nic });
+  if (normalized.phoneNumber) duplicateFilters.push({ phoneNumber: normalized.phoneNumber });
+
+  if (duplicateFilters.length > 0) {
+    const existingUser = await User.findOne({
+      _id: { $ne: user._id },
+      $or: duplicateFilters
+    });
+
+    if (existingUser) {
+      const duplicateField = getDuplicateIdentityField(existingUser, normalized);
+      throw new ApiError(409, `A user with this ${duplicateField} already exists`);
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "fullName")) {
+    user.fullName = payload.fullName.trim();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(normalized, "username")) {
+    user.username = normalized.username;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(normalized, "email")) {
+    user.email = normalized.email;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(normalized, "nic")) {
+    user.nic = normalized.nic;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(normalized, "phoneNumber")) {
+    user.phoneNumber = normalized.phoneNumber;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "specialty")) {
+    if (user.role !== "Doctor") {
+      throw new ApiError(400, "specialty can only be updated for doctor users");
+    }
+
+    const trimmedSpecialty = payload.specialty.trim();
+    if (!DOCTOR_SPECIALTIES.includes(trimmedSpecialty)) {
+      throw new ApiError(400, `specialty must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`);
+    }
+
+    user.specialty = trimmedSpecialty;
+  }
+
+  await user.save();
+  return user.toSafeObject();
+};
+
 module.exports = {
   register,
   login,
   refresh,
   logout,
-  getMe
+  getMe,
+  updateInternalUserProfile
 };

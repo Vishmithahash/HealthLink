@@ -71,6 +71,33 @@ const doctorSchema = new mongoose.Schema(
       minlength: 3,
       maxlength: 140
     },
+    nic: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      maxlength: 20,
+      default: ""
+    },
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 40,
+      default: ""
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 140,
+      default: ""
+    },
+    phoneNumber: {
+      type: String,
+      trim: true,
+      maxlength: 20,
+      default: ""
+    },
     specialization: {
       type: String,
       required: true,
@@ -157,5 +184,7 @@ const doctorSchema = new mongoose.Schema(
 );
 
 doctorSchema.index({ specialization: 1, status: 1, verified: 1 });
+doctorSchema.index({ username: 1 });
+doctorSchema.index({ email: 1 });
 
 module.exports = mongoose.model("Doctor", doctorSchema);

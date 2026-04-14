@@ -3,6 +3,7 @@ const path = require("path");
 const mongoose = require("mongoose");
 const Patient = require("../models/patientModel");
 const Report = require("../models/reportModel");
+const env = require("../config/env");
 
 class ServiceError extends Error {
   constructor(statusCode, message, details = null) {
@@ -13,6 +14,57 @@ class ServiceError extends Error {
 }
 
 const normalizeRole = (role) => String(role || "").trim().toLowerCase();
+const normalizeIdentifier = (value) => String(value || "").trim().toLowerCase();
+const normalizeNic = (value) => String(value || "").trim().toUpperCase();
+const normalizePhone = (value) => String(value || "").trim();
+
+const parseJsonSafely = async (response) => {
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+const syncAuthUserProfile = async ({ userId, payload }) => {
+  if (!payload || Object.keys(payload).length === 0) {
+    return;
+  }
+
+  if (typeof globalThis.fetch !== "function") {
+    throw new ServiceError(500, "Server runtime does not support fetch API");
+  }
+
+  let response;
+  const timeoutSignal =
+    globalThis.AbortSignal && typeof globalThis.AbortSignal.timeout === "function"
+      ? globalThis.AbortSignal.timeout(5000)
+      : undefined;
+
+  try {
+    response = await globalThis.fetch(
+      `${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}/profile`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-api-key": env.internalServiceApiKey
+        },
+        body: JSON.stringify(payload),
+        signal: timeoutSignal
+      }
+    );
+  } catch (error) {
+    throw new ServiceError(502, "Auth service is not reachable");
+  }
+
+  const body = await parseJsonSafely(response);
+
+  if (!response.ok) {
+    const message = body?.message || "Failed to sync user identity data";
+    throw new ServiceError(response.status >= 500 ? 502 : response.status, message, body?.details || null);
+  }
+};
 
 const resolvePatientByIdentifier = async (identifier) => {
   let patient = null;
@@ -71,9 +123,12 @@ const registerPatient = async ({ payload, actor }) => {
   const patient = await Patient.create({
     userId: String(payload.userId),
     fullName: payload.fullName,
+    nic: payload.nic ? normalizeNic(payload.nic) : "",
+    username: payload.username ? normalizeIdentifier(payload.username) : "",
+    email: payload.email ? normalizeIdentifier(payload.email) : "",
     dob: payload.dob || null,
     gender: payload.gender || "prefer_not_to_say",
-    phone: payload.phone || "",
+    phone: payload.phone ? normalizePhone(payload.phone) : payload.phoneNumber ? normalizePhone(payload.phoneNumber) : "",
     address: payload.address || "",
     bloodGroup: payload.bloodGroup || "UNKNOWN",
     medicalHistory: Array.isArray(payload.medicalHistory) ? payload.medicalHistory : [],
@@ -114,8 +169,35 @@ const updateMyProfile = async ({ user, payload }) => {
     throw new ServiceError(404, "Patient profile not found");
   }
 
+  const authPayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload, "fullName")) {
+    authPayload.fullName = payload.fullName;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "nic")) {
+    authPayload.nic = payload.nic;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "username")) {
+    authPayload.username = payload.username;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "email")) {
+    authPayload.email = payload.email;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, "phone")) {
+    authPayload.phoneNumber = payload.phone;
+  }
+
+  await syncAuthUserProfile({ userId: user.id, payload: authPayload });
+
   const fields = [
     "fullName",
+    "nic",
+    "username",
+    "email",
     "dob",
     "gender",
     "phone",
@@ -128,7 +210,15 @@ const updateMyProfile = async ({ user, payload }) => {
 
   fields.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(payload, field)) {
-      patient[field] = payload[field];
+      if (field === "username" || field === "email") {
+        patient[field] = normalizeIdentifier(payload[field]);
+      } else if (field === "nic") {
+        patient[field] = normalizeNic(payload[field]);
+      } else if (field === "phone") {
+        patient[field] = normalizePhone(payload[field]);
+      } else {
+        patient[field] = payload[field];
+      }
     }
   });
 

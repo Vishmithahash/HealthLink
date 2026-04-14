@@ -106,6 +106,27 @@ const patientSchema = new mongoose.Schema(
       minlength: 3,
       maxlength: 140
     },
+    nic: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      maxlength: 20,
+      default: ""
+    },
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 40,
+      default: ""
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 140,
+      default: ""
+    },
     dob: {
       type: Date,
       default: null
@@ -179,5 +200,7 @@ const patientSchema = new mongoose.Schema(
 );
 
 patientSchema.index({ fullName: 1 });
+patientSchema.index({ username: 1 });
+patientSchema.index({ email: 1 });
 
 module.exports = mongoose.model("Patient", patientSchema);

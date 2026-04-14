@@ -21,6 +21,7 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET || null,
   corsOrigin: process.env.CORS_ORIGIN || "*",
   internalServiceApiKey: process.env.INTERNAL_SERVICE_API_KEY || "healthlink-internal-key",
+  authServiceUrl: process.env.AUTH_SERVICE_URL || "http://localhost:4000",
   appointmentServiceUrl: process.env.APPOINTMENT_SERVICE_URL || "http://localhost:4001",
   patientServiceUrl: process.env.PATIENT_SERVICE_URL || "http://localhost:4003",
   telemedicineServiceUrl: process.env.TELEMEDICINE_SERVICE_URL || "http://localhost:4004",
