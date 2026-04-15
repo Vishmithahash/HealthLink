@@ -31,18 +31,21 @@ const AppRouter = () => {
                     {/* Patient Routes */}
                     <Route element={<ProtectedRoute allowedRoles={['patient']} />}>
                         <Route path="/patient/dashboard" element={<PatientDashboard />} />
-                        <Route path="/telemedicine/:id" element={<VideoConsultation />} />
                     </Route>
 
                     {/* Doctor Routes */}
                     <Route element={<ProtectedRoute allowedRoles={['doctor']} />}>
                         <Route path="/doctor/dashboard" element={<DoctorDashboard />} />
-                        <Route path="/telemedicine/:id" element={<VideoConsultation />} />
                     </Route>
 
                     {/* Admin Routes */}
                     <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
                         <Route path="/admin/dashboard" element={<AdminDashboard />} />
+                    </Route>
+
+                    {/* Telemedicine Routes */}
+                    <Route element={<ProtectedRoute allowedRoles={['patient', 'doctor']} />}>
+                        <Route path="/telemedicine/:id" element={<VideoConsultation />} />
                     </Route>
 
                     {/* Shared Protected Routes */}

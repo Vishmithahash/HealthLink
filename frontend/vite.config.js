@@ -26,6 +26,10 @@ export default defineConfig({
         target: "http://localhost:4003",
         changeOrigin: true
       },
+      "/api/telemedicine": {
+        target: "http://localhost:4004",
+        changeOrigin: true
+      },
       "/uploads": {
         target: "http://localhost:4003",
         changeOrigin: true

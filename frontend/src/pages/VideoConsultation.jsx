@@ -1,13 +1,131 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { JitsiMeeting } from '@jitsi/react-sdk';
-import { ArrowLeft, Video } from 'lucide-react';
+import { AlertCircle, ArrowLeft, LoaderCircle, PhoneOff, Video } from 'lucide-react';
+import { extractErrorMessage } from '../services/api';
+import { getAppointmentById } from '../services/appointmentService';
+import {
+    createSession,
+    endTelemedicineSession,
+    getSessionByAppointment,
+    startTelemedicineSession
+} from '../services/telemedicineService';
+import { getUserInfo } from '../utils/auth';
 
 const VideoConsultation = () => {
     const { id } = useParams();
     const navigate = useNavigate();
-    // Ensure a unique but consistent room name based on the appointment ID
-    const roomName = `HealthConnect_Consultation_Room_${id || Math.floor(Math.random() * 1000)}`;
+    const user = getUserInfo();
+    const [loading, setLoading] = useState(true);
+    const [ending, setEnding] = useState(false);
+    const [error, setError] = useState('');
+    const [session, setSession] = useState(null);
+
+    const appointmentId = id;
+
+    const domain = useMemo(() => {
+        if (!session?.meetingUrl) {
+            return 'meet.jit.si';
+        }
+
+        try {
+            return new URL(session.meetingUrl).hostname;
+        } catch {
+            return 'meet.jit.si';
+        }
+    }, [session?.meetingUrl]);
+
+    const loadSession = async () => {
+        if (!appointmentId) {
+            setError('Missing appointment ID for consultation.');
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        setError('');
+
+        try {
+            let resolvedSession;
+
+            try {
+                resolvedSession = await getSessionByAppointment(appointmentId);
+            } catch (sessionError) {
+                if (sessionError?.response?.status !== 404) {
+                    throw sessionError;
+                }
+
+                const appointment = await getAppointmentById(appointmentId);
+                resolvedSession = await createSession({
+                    appointmentId,
+                    patientId: appointment?.patientId,
+                    doctorId: appointment?.doctorId
+                });
+            }
+
+            if (resolvedSession?._id && resolvedSession.status !== 'completed') {
+                const startedSession = await startTelemedicineSession(resolvedSession._id).catch(() => resolvedSession);
+                setSession(startedSession || resolvedSession);
+            } else {
+                setSession(resolvedSession);
+            }
+        } catch (err) {
+            setError(extractErrorMessage(err, 'Could not load telemedicine session'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadSession();
+    }, [appointmentId]);
+
+    const handleLeave = async () => {
+        navigate(-1);
+    };
+
+    const handleEndAndLeave = async () => {
+        if (!session?._id) {
+            navigate(-1);
+            return;
+        }
+
+        setEnding(true);
+        setError('');
+
+        try {
+            await endTelemedicineSession(session._id);
+            navigate(-1);
+        } catch (err) {
+            setError(extractErrorMessage(err, 'Could not end consultation'));
+        } finally {
+            setEnding(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-[65vh] text-slate-600 gap-2">
+                <LoaderCircle className="h-5 w-5 animate-spin" /> Loading consultation room...
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="bg-white border border-rose-200 text-rose-700 rounded-xl p-4 inline-flex items-center gap-2">
+                <AlertCircle className="h-5 w-5" /> {error}
+            </div>
+        );
+    }
+
+    if (!session?.roomName) {
+        return (
+            <div className="bg-white border border-slate-200 text-slate-700 rounded-xl p-4">
+                Session details are not available for this consultation.
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col h-[85vh] bg-slate-50 relative rounded-2xl overflow-hidden shadow-lg border border-slate-200 animate-fade-in">
@@ -20,22 +138,33 @@ const VideoConsultation = () => {
                         <h2 className="text-xl font-bold text-slate-800">Secure Telemedicine Session</h2>
                         <p className="text-sm font-medium text-slate-500 flex items-center">
                             <span className="w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse"></span>
-                            Live • Secure P2P Connection
+                            Live room: {session.roomName}
                         </p>
                     </div>
                 </div>
-                <button
-                    onClick={() => navigate(-1)}
-                    className="flex items-center text-sm font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-md transition-shadow shadow-sm hover:shadow"
-                >
-                    <ArrowLeft className="h-4 w-4 mr-2" /> Leave Session
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleLeave}
+                        className="flex items-center text-sm font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-md transition-shadow shadow-sm hover:shadow"
+                    >
+                        <ArrowLeft className="h-4 w-4 mr-2" /> Leave
+                    </button>
+                    {user?.roleKey === 'doctor' ? (
+                        <button
+                            onClick={handleEndAndLeave}
+                            disabled={ending || session.status === 'completed'}
+                            className="flex items-center text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:bg-slate-400 px-4 py-2 rounded-md transition-shadow shadow-sm hover:shadow"
+                        >
+                            <PhoneOff className="h-4 w-4 mr-2" /> {ending ? 'Ending...' : 'End Session'}
+                        </button>
+                    ) : null}
+                </div>
             </div>
 
             <div className="flex-1 w-full bg-slate-900 relative">
                 <JitsiMeeting
-                    domain="meet.jit.si"
-                    roomName={roomName}
+                    domain={domain}
+                    roomName={session.roomName}
                     configOverwrite={{
                         startWithAudioMuted: false,
                         disableModeratorIndicator: true,
@@ -46,7 +175,7 @@ const VideoConsultation = () => {
                         DISABLE_JOIN_LEAVE_NOTIFICATIONS: true
                     }}
                     userInfo={{
-                        displayName: 'HealthConnect User'
+                        displayName: user?.fullName || 'HealthLink User'
                     }}
                     getIFrameRef={(iframeRef) => {
                         iframeRef.style.height = '100%';

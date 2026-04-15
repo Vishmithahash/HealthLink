@@ -517,6 +517,26 @@ const createPrescription = async ({ payload, user, authHeader }) => {
 
   try {
     await requestClient.post(
+      `${env.patientServiceUrl}/api/patients/${encodeURIComponent(String(resolvedPatientId))}/prescriptions`,
+      {
+        appointmentId,
+        doctorId: doctor.userId,
+        medicines,
+        instructions: instructions || "",
+        followUpDate: followUpDate || null,
+        issuedAt: prescription.issuedAt
+      },
+      {
+        headers: getHeaders(authHeader)
+      }
+    );
+  } catch (syncError) {
+    await Prescription.deleteOne({ _id: prescription._id });
+    throw mapAxiosError(syncError, "Failed to sync prescription to Patient Service");
+  }
+
+  try {
+    await requestClient.post(
       `${env.notificationServiceUrl}/api/notifications/send`,
       {
         type: "PRESCRIPTION_ISSUED",

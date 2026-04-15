@@ -36,3 +36,13 @@ export const getPatientPrescriptions = async () => {
 	const response = await patientApi.get("/prescriptions");
 	return extractData(response);
 };
+
+export const getPatientById = async (id) => {
+	const response = await patientApi.get(`/${id}`);
+	return extractData(response);
+};
+
+export const deletePatientReport = async (reportId) => {
+	const response = await patientApi.delete(`/reports/${reportId}`);
+	return extractData(response);
+};
