@@ -7,6 +7,7 @@ Microservices included:
 - patient-service
 - telemedicine-service
 - ai-service
+- payment-service
 
 Both are configured to run with MongoDB in Docker Compose and Kubernetes.
 
@@ -28,6 +29,7 @@ Service endpoints:
 - Patient: http://localhost:4003/health
 - Telemedicine: http://localhost:4004/health
 - AI Symptom Checker: http://localhost:4005/health
+- Payment Service: http://localhost:4006/health
 
 ## Kubernetes Run (Minikube)
 
@@ -41,6 +43,7 @@ Service endpoints:
 	minikube image build -t healthlink-patient-service:local ./patient-service
 	minikube image build -t healthlink-telemedicine-service:local ./telemedicine-service
 	minikube image build -t healthlink-ai-service:local ./ai-service
+	minikube image build -t healthlink-payment-service:local ./payment-service
 
 3. Apply shared infrastructure and config:
 	kubectl apply -f k8s/mongo.yaml
@@ -56,6 +59,8 @@ Service endpoints:
 	kubectl apply -f k8s/telemedicine-secret.yaml
 	kubectl apply -f k8s/ai-configmap.yaml
 	kubectl apply -f k8s/ai-secret.yaml
+	kubectl apply -f k8s/payment-configmap.yaml
+	kubectl apply -f k8s/payment-secret.yaml
 
 4. Apply service workloads:
 	kubectl apply -f auth-service/k8s/deployment.yaml
@@ -70,6 +75,8 @@ Service endpoints:
 	kubectl apply -f telemedicine-service/k8s/service.yaml
 	kubectl apply -f ai-service/k8s/deployment.yaml
 	kubectl apply -f ai-service/k8s/service.yaml
+	kubectl apply -f payment-service/k8s/deployment.yaml
+	kubectl apply -f payment-service/k8s/service.yaml
 
 5. Verify:
 	kubectl get pods
@@ -82,6 +89,7 @@ Service endpoints:
 	kubectl port-forward svc/patient-service 4003:80
 	kubectl port-forward svc/telemedicine-service 4004:4004
 	kubectl port-forward svc/ai-service 4005:4005
+	kubectl port-forward svc/payment-service 4006:4006
 
 ## Notes
 
@@ -89,5 +97,4 @@ Service endpoints:
 - JWT_ACCESS_SECRET is intentionally shared with doctor-service for token verification.
 - JWT_ACCESS_SECRET is intentionally shared with patient-service for token verification.
 - JWT_ACCESS_SECRET is intentionally shared with ai-service for token verification.
-- In Docker Compose, MongoDB uses internal host mongo.
-- In Kubernetes, MongoDB uses internal service name mongo.
+- MongoDB URIs are configured as Atlas connection strings with service-specific database names (auth-db, appointment-db, doctor-db, patient-db, telemedicine-db, ai-db, payment-db).

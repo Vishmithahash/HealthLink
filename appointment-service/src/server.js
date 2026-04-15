@@ -5,7 +5,7 @@ const { connectDatabase } = require("./config/database");
 const start = async () => {
   try {
     await connectDatabase();
-    app.listen(env.port, () => {
+    app.listen(env.port, "0.0.0.0", () => {
       console.log(`Appointment service running on port ${env.port}`);
     });
   } catch (error) {
