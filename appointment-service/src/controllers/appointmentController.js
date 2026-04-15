@@ -142,7 +142,8 @@ const updateStatus = async (req, res, next) => {
     const appointment = await appointmentService.updateAppointmentStatus({
       id: req.params.id,
       body: req.body,
-      user: req.user
+      user: req.user,
+      headers: appointmentService.authHeaderFromReq(req)
     });
 
     return send(res, 200, "Appointment status updated successfully", appointment);

@@ -29,6 +29,10 @@ services:
     environment:
       NODE_ENV: development
       PORT: 4000
+      DOCTOR_SERVICE_URL: http://doctor-service:4002
+      PATIENT_SERVICE_URL: http://patient-service:4003
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
+      REQUEST_TIMEOUT_MS: 5000
 
   appointment-service:
     build:
@@ -50,8 +54,35 @@ services:
       PORT: 4001
       ALLOW_DOCTOR_FALLBACK: "true"
       DOCTOR_SERVICE_URL: http://doctor-service:4002
+      TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
       PAYMENT_SERVICE_URL: http://host.docker.internal:3004
       NOTIFICATION_SERVICE_URL: http://host.docker.internal:3005
+      REQUEST_TIMEOUT_MS: 5000
+
+  telemedicine-service:
+    build:
+      context: ./telemedicine-service
+    image: healthlink-telemedicine-service:local
+    container_name: healthlink-telemedicine-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      appointment-service:
+        condition: service_started
+    ports:
+      - "4004:4004"
+    env_file:
+      - ./telemedicine-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4004
+      JWT_SECRET: access_secret_123456789_secure_key_service
+      APPOINTMENT_SERVICE_URL: http://appointment-service:4001
+      VERIFY_APPOINTMENT_WITH_SERVICE: "true"
+      ALLOW_APPOINTMENT_FALLBACK: "false"
+      JITSI_DOMAIN: meet.jit.si
+      CORS_ORIGIN: http://localhost:3000
       REQUEST_TIMEOUT_MS: 5000
 
   doctor-service:
@@ -63,6 +94,8 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+      telemedicine-service:
+        condition: service_started
     ports:
       - "4002:4002"
     env_file:
@@ -72,9 +105,11 @@ services:
       PORT: 4002
       MONGODB_URI: mongodb://mongo:27017/doctor-db
       JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       APPOINTMENT_SERVICE_URL: http://appointment-service:4001
       PATIENT_SERVICE_URL: http://patient-service:4003
-      TELEMEDICINE_SERVICE_URL: http://host.docker.internal:4004
+      TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
       NOTIFICATION_SERVICE_URL: http://host.docker.internal:4005
       REQUEST_TIMEOUT_MS: 5000
 
@@ -96,6 +131,8 @@ services:
       PORT: 4003
       MONGODB_URI: mongodb://mongo:27017/patient-db
       JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       CORS_ORIGIN: http://localhost:3000
       MAX_REPORT_SIZE_MB: 10
 

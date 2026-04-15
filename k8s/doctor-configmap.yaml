@@ -5,9 +5,11 @@ metadata:
 data:
   PORT: "4002"
   CORS_ORIGIN: "http://localhost:3000"
+  AUTH_SERVICE_URL: "http://auth-service:4000"
+  INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
   APPOINTMENT_SERVICE_URL: "http://appointment-service"
   PATIENT_SERVICE_URL: "http://patient-service"
-  TELEMEDICINE_SERVICE_URL: "http://telemedicine-service"
+  TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
   TELEMEDICINE_JOIN_BASE_URL: "https://telemedicine.healthlink.local/session"
   NOTIFICATION_SERVICE_URL: "http://notification-service"
   REQUEST_TIMEOUT_MS: "5000"

@@ -40,6 +40,11 @@ spec:
                 configMapKeyRef:
                   name: appointment-service-config
                   key: DOCTOR_SERVICE_URL
+            - name: TELEMEDICINE_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: appointment-service-config
+                  key: TELEMEDICINE_SERVICE_URL
             - name: PAYMENT_SERVICE_URL
               valueFrom:
                 configMapKeyRef:

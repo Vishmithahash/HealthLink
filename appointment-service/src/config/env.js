@@ -17,6 +17,7 @@ module.exports = {
   corsOrigin: process.env.CORS_ORIGIN || "*",
   allowDoctorFallback: process.env.ALLOW_DOCTOR_FALLBACK === "true",
   doctorServiceUrl: process.env.DOCTOR_SERVICE_URL || "http://localhost:3003",
+  telemedicineServiceUrl: process.env.TELEMEDICINE_SERVICE_URL || "http://localhost:4004",
   paymentServiceUrl: process.env.PAYMENT_SERVICE_URL || "http://localhost:3004",
   notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || "http://localhost:3005",
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 5000)

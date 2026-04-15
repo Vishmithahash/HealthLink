@@ -416,7 +416,7 @@ const getTelemedicineSession = async ({ appointmentId, user, authHeader }) => {
 
   try {
     const response = await requestClient.get(
-      `${env.telemedicineServiceUrl}/api/telemedicine/sessions/${encodeURIComponent(appointmentId)}`,
+      `${env.telemedicineServiceUrl}/api/telemedicine/session/appointment/${encodeURIComponent(appointmentId)}`,
       {
         headers: getHeaders(authHeader)
       }
@@ -427,6 +427,29 @@ const getTelemedicineSession = async ({ appointmentId, user, authHeader }) => {
       session: asData(response)
     };
   } catch (error) {
+    if (error.response?.status === 404) {
+      try {
+        const createResponse = await requestClient.post(
+          `${env.telemedicineServiceUrl}/api/telemedicine/session`,
+          {
+            appointmentId,
+            patientId: appointment.patientId,
+            doctorId: appointment.doctorId
+          },
+          {
+            headers: getHeaders(authHeader)
+          }
+        );
+
+        return {
+          appointment,
+          session: asData(createResponse)
+        };
+      } catch (creationError) {
+        // Fall through to fallback response below.
+      }
+    }
+
     return {
       appointment,
       session: {

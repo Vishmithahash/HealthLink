@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: telemedicine-service
+  labels:
+    app: telemedicine-service
+spec:
+  selector:
+    app: telemedicine-service
+  ports:
+    - name: http
+      protocol: TCP
+      port: 4004
+      targetPort: 4004
+  type: NodePort

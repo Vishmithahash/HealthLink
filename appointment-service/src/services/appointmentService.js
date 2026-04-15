@@ -180,6 +180,26 @@ const notifyExternalSystems = async ({ appointment, headers }) => {
   await Promise.allSettled(tasks);
 };
 
+const ensureTelemedicineSession = async ({ appointment, headers }) => {
+  if (String(appointment.status) !== "confirmed") {
+    return;
+  }
+
+  try {
+    await httpClient.post(
+      `${env.telemedicineServiceUrl}/api/telemedicine/session`,
+      {
+        appointmentId: appointment._id.toString(),
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId
+      },
+      { headers }
+    );
+  } catch (error) {
+    // Best-effort integration so appointment confirmation remains successful.
+  }
+};
+
 // API LOGIC: Search Doctors
 const searchDoctors = async ({ specialty, name, availability, headers }) => {
   try {
@@ -326,12 +346,14 @@ const listDoctorAppointments = async ({ doctorId, user }) => {
   return Appointment.find({ doctorId }).sort({ scheduledAt: -1 });
 };
 
-const updateAppointmentStatus = async ({ id, body, user }) => {
+const updateAppointmentStatus = async ({ id, body, user, headers }) => {
   const appointment = await getAppointmentById({ id, user });
   validateStatusTransition(appointment.status, body.status, user.role);
 
   appointment.status = body.status;
   await appointment.save();
+
+  await ensureTelemedicineSession({ appointment, headers });
   
   return appointment;
 };

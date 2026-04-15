@@ -5,6 +5,7 @@ Four microservices are included:
 - appointment-service
 - doctor-service
 - patient-service
+- telemedicine-service
 
 Both are configured to run with MongoDB in Docker Compose and Kubernetes.
 
@@ -24,6 +25,7 @@ Service endpoints:
 - Appointment: http://localhost:4001/health
 - Doctor: http://localhost:4002/health
 - Patient: http://localhost:4003/health
+- Telemedicine: http://localhost:4004/health
 
 ## Kubernetes Run (Minikube)
 
@@ -35,6 +37,7 @@ Service endpoints:
 	minikube image build -t healthlink-appointment-service:local ./appointment-service
 	minikube image build -t healthlink-doctor-service:local ./doctor-service
 	minikube image build -t healthlink-patient-service:local ./patient-service
+	minikube image build -t healthlink-telemedicine-service:local ./telemedicine-service
 
 3. Apply shared infrastructure and config:
 	kubectl apply -f k8s/mongo.yaml
@@ -46,6 +49,8 @@ Service endpoints:
 	kubectl apply -f k8s/doctor-secret.yaml
 	kubectl apply -f k8s/patient-configmap.yaml
 	kubectl apply -f k8s/patient-secret.yaml
+	kubectl apply -f k8s/telemedicine-configmap.yaml
+	kubectl apply -f k8s/telemedicine-secret.yaml
 
 4. Apply service workloads:
 	kubectl apply -f auth-service/k8s/deployment.yaml
@@ -56,6 +61,8 @@ Service endpoints:
 	kubectl apply -f doctor-service/k8s/service.yaml
 	kubectl apply -f patient-service/k8s/deployment.yaml
 	kubectl apply -f patient-service/k8s/service.yaml
+	kubectl apply -f telemedicine-service/k8s/deployment.yaml
+	kubectl apply -f telemedicine-service/k8s/service.yaml
 
 5. Verify:
 	kubectl get pods
@@ -66,6 +73,7 @@ Service endpoints:
 	kubectl port-forward svc/appointment-service 4001:80
 	kubectl port-forward svc/doctor-service 4002:80
 	kubectl port-forward svc/patient-service 4003:80
+	kubectl port-forward svc/telemedicine-service 4004:4004
 
 ## Notes
 

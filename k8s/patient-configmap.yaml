@@ -5,4 +5,6 @@ metadata:
 data:
   PORT: "4003"
   CORS_ORIGIN: "http://localhost:3000"
+  AUTH_SERVICE_URL: "http://auth-service:4000"
+  INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
   MAX_REPORT_SIZE_MB: "10"

@@ -10,6 +10,10 @@ items:
       REFRESH_TOKEN_EXPIRES_IN: "7d"
       BCRYPT_SALT_ROUNDS: "12"
       CORS_ORIGIN: "http://localhost:3000"
+      DOCTOR_SERVICE_URL: "http://doctor-service:4002"
+      PATIENT_SERVICE_URL: "http://patient-service:4003"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
+      REQUEST_TIMEOUT_MS: "5000"
   - apiVersion: v1
     kind: Secret
     metadata:
@@ -27,6 +31,7 @@ items:
       CORS_ORIGIN: "http://localhost:3000"
       REQUEST_TIMEOUT_MS: "5000"
       DOCTOR_SERVICE_URL: "http://doctor-service"
+      TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
       PAYMENT_SERVICE_URL: "http://payment-service:3004"
       NOTIFICATION_SERVICE_URL: "http://notification-service:3005"
   - apiVersion: v1
@@ -44,9 +49,11 @@ items:
     data:
       PORT: "4002"
       CORS_ORIGIN: "http://localhost:3000"
+      AUTH_SERVICE_URL: "http://auth-service:4000"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
       APPOINTMENT_SERVICE_URL: "http://appointment-service"
       PATIENT_SERVICE_URL: "http://patient-service"
-      TELEMEDICINE_SERVICE_URL: "http://telemedicine-service"
+      TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
       TELEMEDICINE_JOIN_BASE_URL: "https://telemedicine.healthlink.local/session"
       NOTIFICATION_SERVICE_URL: "http://notification-service"
       REQUEST_TIMEOUT_MS: "5000"
@@ -67,6 +74,8 @@ items:
       PORT: "4003"
       CORS_ORIGIN: "http://localhost:3000"
       MAX_REPORT_SIZE_MB: "10"
+      AUTH_SERVICE_URL: "http://auth-service:4000"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
   - apiVersion: v1
     kind: Secret
     metadata:
@@ -76,3 +85,23 @@ items:
       MONGODB_URI: "mongodb://mongo:27017/patient-db"
       JWT_ACCESS_SECRET: "access_secret_123456789_secure_key_service"
       JWT_SECRET: "your_super_secret_jwt_key_here"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: telemedicine-service-config
+    data:
+      PORT: "4004"
+      CORS_ORIGIN: "http://localhost:3000"
+      JITSI_DOMAIN: "meet.jit.si"
+      APPOINTMENT_SERVICE_URL: "http://appointment-service"
+      VERIFY_APPOINTMENT_WITH_SERVICE: "false"
+      ALLOW_APPOINTMENT_FALLBACK: "true"
+      REQUEST_TIMEOUT_MS: "5000"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: telemedicine-service-secret
+    type: Opaque
+    stringData:
+      MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/telemedicine-db?appName=Cluster0"
+      JWT_SECRET: "access_secret_123456789_secure_key_service"

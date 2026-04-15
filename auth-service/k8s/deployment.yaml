@@ -45,6 +45,26 @@ spec:
                 configMapKeyRef:
                   name: auth-service-config
                   key: BCRYPT_SALT_ROUNDS
+            - name: DOCTOR_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: DOCTOR_SERVICE_URL
+            - name: PATIENT_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: PATIENT_SERVICE_URL
+            - name: INTERNAL_SERVICE_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: INTERNAL_SERVICE_API_KEY
+            - name: REQUEST_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: REQUEST_TIMEOUT_MS
             - name: MONGODB_URI
               valueFrom:
                 secretKeyRef:
