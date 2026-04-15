@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { DOCTOR_SPECIALTIES } = require("../constants/doctorSpecialties");
 
 const availabilitySlotSchema = new mongoose.Schema(
   {
@@ -74,6 +75,7 @@ const doctorSchema = new mongoose.Schema(
     specialization: {
       type: String,
       required: true,
+      enum: DOCTOR_SPECIALTIES,
       trim: true,
       index: true
     },

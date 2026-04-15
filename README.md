@@ -1,11 +1,12 @@
 # HealthLink
 
-Four microservices are included:
+Microservices included:
 - auth-service
 - appointment-service
 - doctor-service
 - patient-service
 - telemedicine-service
+- ai-service
 
 Both are configured to run with MongoDB in Docker Compose and Kubernetes.
 
@@ -26,6 +27,7 @@ Service endpoints:
 - Doctor: http://localhost:4002/health
 - Patient: http://localhost:4003/health
 - Telemedicine: http://localhost:4004/health
+- AI Symptom Checker: http://localhost:4005/health
 
 ## Kubernetes Run (Minikube)
 
@@ -38,6 +40,7 @@ Service endpoints:
 	minikube image build -t healthlink-doctor-service:local ./doctor-service
 	minikube image build -t healthlink-patient-service:local ./patient-service
 	minikube image build -t healthlink-telemedicine-service:local ./telemedicine-service
+	minikube image build -t healthlink-ai-service:local ./ai-service
 
 3. Apply shared infrastructure and config:
 	kubectl apply -f k8s/mongo.yaml
@@ -51,6 +54,8 @@ Service endpoints:
 	kubectl apply -f k8s/patient-secret.yaml
 	kubectl apply -f k8s/telemedicine-configmap.yaml
 	kubectl apply -f k8s/telemedicine-secret.yaml
+	kubectl apply -f k8s/ai-configmap.yaml
+	kubectl apply -f k8s/ai-secret.yaml
 
 4. Apply service workloads:
 	kubectl apply -f auth-service/k8s/deployment.yaml
@@ -63,6 +68,8 @@ Service endpoints:
 	kubectl apply -f patient-service/k8s/service.yaml
 	kubectl apply -f telemedicine-service/k8s/deployment.yaml
 	kubectl apply -f telemedicine-service/k8s/service.yaml
+	kubectl apply -f ai-service/k8s/deployment.yaml
+	kubectl apply -f ai-service/k8s/service.yaml
 
 5. Verify:
 	kubectl get pods
@@ -74,11 +81,13 @@ Service endpoints:
 	kubectl port-forward svc/doctor-service 4002:80
 	kubectl port-forward svc/patient-service 4003:80
 	kubectl port-forward svc/telemedicine-service 4004:4004
+	kubectl port-forward svc/ai-service 4005:4005
 
 ## Notes
 
 - JWT_ACCESS_SECRET is intentionally the same across auth-service and appointment-service for token verification.
 - JWT_ACCESS_SECRET is intentionally shared with doctor-service for token verification.
 - JWT_ACCESS_SECRET is intentionally shared with patient-service for token verification.
+- JWT_ACCESS_SECRET is intentionally shared with ai-service for token verification.
 - In Docker Compose, MongoDB uses internal host mongo.
 - In Kubernetes, MongoDB uses internal service name mongo.

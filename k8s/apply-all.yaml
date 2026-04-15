@@ -54,6 +54,7 @@ items:
       APPOINTMENT_SERVICE_URL: "http://appointment-service"
       PATIENT_SERVICE_URL: "http://patient-service"
       TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
+      AI_SERVICE_URL: "http://ai-service:4005"
       TELEMEDICINE_JOIN_BASE_URL: "https://telemedicine.healthlink.local/session"
       NOTIFICATION_SERVICE_URL: "http://notification-service"
       REQUEST_TIMEOUT_MS: "5000"
@@ -76,6 +77,7 @@ items:
       MAX_REPORT_SIZE_MB: "10"
       AUTH_SERVICE_URL: "http://auth-service:4000"
       INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
+      AI_SERVICE_URL: "http://ai-service:4005"
   - apiVersion: v1
     kind: Secret
     metadata:
@@ -105,3 +107,23 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/telemedicine-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: ai-service-config
+    data:
+      PORT: "4005"
+      CORS_ORIGIN: "http://localhost:3000"
+      COHERE_MODEL: "command-a-03-2025"
+      RATE_LIMIT_WINDOW_MS: "60000"
+      RATE_LIMIT_MAX_REQUESTS: "10"
+      REQUEST_TIMEOUT_MS: "10000"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: ai-service-secret
+    type: Opaque
+    stringData:
+      MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/ai-db?appName=Cluster0"
+      JWT_SECRET: "access_secret_123456789_secure_key_service"
+      COHERE_API_KEY: "REPLACE_WITH_COHERE_API_KEY"

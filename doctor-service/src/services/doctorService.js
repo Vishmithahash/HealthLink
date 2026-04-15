@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Doctor = require("../models/doctorModel");
 const Prescription = require("../models/prescriptionModel");
 const env = require("../config/env");
+const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doctorSpecialties");
 
 class ServiceError extends Error {
   constructor(statusCode, message, details = null) {
@@ -129,6 +130,15 @@ const validateAvailabilityPayload = (payload) => {
   }
 };
 
+const normalizeDoctorSpecialization = (value) => {
+  const resolved = resolveDoctorSpecialty(value);
+  if (!resolved) {
+    throw new ServiceError(400, `specialization must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`);
+  }
+
+  return resolved;
+};
+
 const getHeaders = (authHeader) => ({
   Authorization: authHeader || ""
 });
@@ -155,7 +165,7 @@ const registerDoctor = async ({ payload, actor }) => {
   const doctor = await Doctor.create({
     userId: String(payload.userId),
     fullName: payload.fullName,
-    specialization: payload.specialization,
+    specialization: normalizeDoctorSpecialization(payload.specialization),
     licenseNumber: payload.licenseNumber,
     qualification: payload.qualification || "",
     experienceYears: payload.experienceYears || 0,
@@ -190,6 +200,10 @@ const updateDoctorProfile = async ({ user, payload }) => {
     "workingHours",
     "bio"
   ];
+
+  if (Object.prototype.hasOwnProperty.call(payload, "specialization")) {
+    payload.specialization = normalizeDoctorSpecialization(payload.specialization);
+  }
 
   allowedFields.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(payload, field)) {

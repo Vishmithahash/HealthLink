@@ -5,21 +5,9 @@ const authController = require("../controllers/authController");
 const authMiddleware = require("../middleware/authMiddleware");
 const roleMiddleware = require("../middleware/roleMiddleware");
 const validateRequest = require("../middleware/validateRequest");
+const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doctorSpecialties");
 
 const router = express.Router();
-
-const DOCTOR_SPECIALTIES = [
-  "General Physician",
-  "Cardiologist",
-  "Dermatologist",
-  "Neurologist",
-  "Orthopedic",
-  "Pediatrician",
-  "Gynecologist",
-  "Psychiatrist",
-  "ENT Specialist",
-  "Ophthalmologist"
-];
 
 const registerValidation = [
   body("fullName")
@@ -80,9 +68,12 @@ const registerValidation = [
         throw new Error("specialty is required when role is Doctor");
       }
 
-      if (!DOCTOR_SPECIALTIES.includes(specialty)) {
+      const resolvedSpecialty = resolveDoctorSpecialty(specialty);
+      if (!resolvedSpecialty) {
         throw new Error(`specialty must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`);
       }
+
+      req.body.specialty = resolvedSpecialty;
 
       return true;
     }),

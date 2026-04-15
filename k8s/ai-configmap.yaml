@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-service-config
+data:
+  PORT: "4005"
+  CORS_ORIGIN: "http://localhost:3000"
+  COHERE_MODEL: "command-a-03-2025"
+  RATE_LIMIT_WINDOW_MS: "60000"
+  RATE_LIMIT_MAX_REQUESTS: "10"
+  REQUEST_TIMEOUT_MS: "10000"
