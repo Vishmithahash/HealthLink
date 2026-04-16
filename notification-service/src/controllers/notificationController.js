@@ -6,6 +6,7 @@ const {
   isVerifiedTwilioRecipient,
   sendSms
 } = require("../services/twilioService");
+const { withSendProtection } = require("../services/sendProtectionService");
 const NotificationLog = require("../models/NotificationLog");
 
 const legacyTypeToTemplate = {
@@ -183,10 +184,26 @@ const dispatchSmsNotification = async ({ payload, templateType }) => {
       }
 
       const body = renderSmsTemplate(templateType, payload, recipient);
-      const message = await sendSms({
-        to: recipient.phone,
-        body
+      const protectedSend = await withSendProtection({
+        channel: "sms",
+        recipient: recipient.phone,
+        sendFn: async () =>
+          sendSms({
+            to: recipient.phone,
+            body
+          })
       });
+
+      if (protectedSend.status === "skipped") {
+        return {
+          phone: recipient.phone,
+          role: recipient.role,
+          status: "skipped",
+          reason: protectedSend.reason
+        };
+      }
+
+      const message = protectedSend.result;
 
       console.info(
         `[notification-service] Sent ${templateType} sms to ${recipient.phone} as ${recipient.role}. sid=${
@@ -270,7 +287,24 @@ const dispatchNotification = async (payload, forcedTemplateType) => {
   const results = await Promise.allSettled(
     recipients.map(async (recipient) => {
       const html = renderTemplate(templateType, payload, recipient);
-      const info = await sendEmail(recipient.email, subject, html);
+
+      const protectedSend = await withSendProtection({
+        channel: "email",
+        recipient: recipient.email,
+        sendFn: async () => sendEmail(recipient.email, subject, html)
+      });
+
+      if (protectedSend.status === "skipped") {
+        return {
+          email: recipient.email,
+          role: recipient.role,
+          status: "skipped",
+          error: protectedSend.reason,
+          messageId: null
+        };
+      }
+
+      const info = protectedSend.result;
 
       console.info(
         `[notification-service] Sent ${templateType} email to ${recipient.email} as ${recipient.role}. messageId=${
@@ -330,9 +364,11 @@ const mapLegacyPayload = (payload) => {
   const data = payload.data && typeof payload.data === "object" ? payload.data : {};
 
   const to = payload.to || payload.recipientEmail || data.to || data.email || null;
+  const toPhone = payload.toPhone || payload.recipientPhone || data.toPhone || data.phone || null;
 
   return {
     to,
+    toPhone,
     templateType,
     subject: payload.subject || getDefaultSubject(templateType),
     message:
@@ -381,23 +417,6 @@ const sendEmailNotification = async (req, res, next) => {
 const sendLegacyNotification = async (req, res, next) => {
   try {
     const mappedPayload = mapLegacyPayload(req.body || {});
-
-    if (!mappedPayload.to) {
-      console.info(
-        `[notification-service] Accepted legacy notification ${String(req.body?.type || "UNKNOWN")} without recipient email.`
-      );
-
-      return res.status(202).json({
-        success: true,
-        message: "Legacy notification accepted but no recipient email was provided",
-        data: {
-          accepted: true,
-          sentCount: 0,
-          failedCount: 0,
-          results: []
-        }
-      });
-    }
 
     const templateType = mappedPayload.templateType;
     const notificationResult = await dispatchNotification(mappedPayload, templateType);

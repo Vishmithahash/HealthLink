@@ -38,8 +38,32 @@ const baseLayout = (title, bodyContent) => {
   `;
 };
 
+const formatColomboDateTime = (value) => {
+  if (!value) {
+    return "N/A";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  }).format(date);
+};
+
 const appointmentTemplate = (data, recipient) => {
   const name = recipient.name || data.patientName || "there";
+  const joinUrl = data.joinUrl || data.telemedicineLink || "";
+  const consultationDate = formatColomboDateTime(data.consultationDate);
   return baseLayout(
     "Appointment Confirmation",
     `
@@ -48,7 +72,8 @@ const appointmentTemplate = (data, recipient) => {
       <p><strong>Doctor:</strong> ${escapeHtml(data.doctorName || "N/A")}</p>
       <p><strong>Patient:</strong> ${escapeHtml(data.patientName || "N/A")}</p>
       <p><strong>Appointment ID:</strong> ${escapeHtml(data.appointmentId || "N/A")}</p>
-      <p><strong>Date:</strong> ${escapeHtml(data.consultationDate || "N/A")}</p>
+      <p><strong>Date:</strong> ${escapeHtml(consultationDate)} (Asia/Colombo)</p>
+      ${joinUrl ? `<p><strong>Telemedicine Link:</strong> <a href="${escapeHtml(joinUrl)}">${escapeHtml(joinUrl)}</a></p>` : ""}
       ${data.message ? `<p>${escapeHtml(data.message)}</p>` : ""}
     `
   );
@@ -70,13 +95,14 @@ const paymentSuccessTemplate = (data, recipient) => {
 
 const consultationCompletedTemplate = (data, recipient) => {
   const name = recipient.name || data.patientName || "there";
+  const consultationDate = formatColomboDateTime(data.consultationDate);
   return baseLayout(
     "Consultation Completed",
     `
       <p>Hello ${escapeHtml(name)},</p>
       <p>Your consultation has been marked as completed.</p>
       <p><strong>Doctor:</strong> ${escapeHtml(data.doctorName || "N/A")}</p>
-      <p><strong>Date:</strong> ${escapeHtml(data.consultationDate || "N/A")}</p>
+      <p><strong>Date:</strong> ${escapeHtml(consultationDate)} (Asia/Colombo)</p>
       <p>Please review follow-up instructions in your patient portal.</p>
       ${data.message ? `<p>${escapeHtml(data.message)}</p>` : ""}
     `
@@ -130,15 +156,22 @@ const getDefaultSubject = (templateType) => {
 
 const renderSmsTemplate = (templateType, data, recipient = {}) => {
   const name = recipient.name || data.patientName || data.doctorName || "there";
+  const consultationDate = formatColomboDateTime(data.consultationDate);
 
   switch (templateType) {
     case "appointment-confirmation":
-      return (
+      return [
         `Hello ${name}, your appointment is confirmed. ` +
         `Doctor: ${data.doctorName || "N/A"}. ` +
-        `Date: ${data.consultationDate || "N/A"}. ` +
-        `Appointment ID: ${data.appointmentId || "N/A"}.`
-      );
+        `Date: ${consultationDate}. ` +
+        `Appointment ID: ${data.appointmentId || "N/A"}.`,
+        data.joinUrl || data.telemedicineLink
+          ? `Telemedicine link: ${data.joinUrl || data.telemedicineLink}.`
+          : "",
+        data.message ? `${data.message}` : ""
+      ]
+        .filter(Boolean)
+        .join(" ");
     case "payment-success":
       return (
         `Hello ${name}, your payment is successful. ` +
@@ -149,7 +182,7 @@ const renderSmsTemplate = (templateType, data, recipient = {}) => {
       return (
         `Hello ${name}, your consultation is completed. ` +
         `Doctor: ${data.doctorName || "N/A"}. ` +
-        `Date: ${data.consultationDate || "N/A"}.`
+        `Date: ${consultationDate}.`
       );
     case "payment-verification":
       return (

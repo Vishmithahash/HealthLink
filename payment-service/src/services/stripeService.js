@@ -21,10 +21,13 @@ const retrievePaymentIntent = async (id) => {
   return stripe.paymentIntents.retrieve(id);
 };
 
-const confirmPaymentIntentForDemo = async (id) => {
+const confirmPaymentIntentForDemo = async (id, cardType = "visa") => {
+  const selectedType = String(cardType || "visa").toLowerCase();
+  const paymentMethod = selectedType === "mastercard" ? "pm_card_mastercard" : "pm_card_visa";
+
   try {
     return await stripe.paymentIntents.confirm(id, {
-      payment_method: "pm_card_visa"
+      payment_method: paymentMethod
     });
   } catch (error) {
     if (error?.code === "payment_intent_unexpected_state") {
@@ -33,6 +36,8 @@ const confirmPaymentIntentForDemo = async (id) => {
 
     throw error;
   }
+};
+
 const retrievePaymentMethod = async (id) => {
   return stripe.paymentMethods.retrieve(id);
 };

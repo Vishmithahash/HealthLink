@@ -9,6 +9,7 @@ import {
   createPrescription,
   getDoctorAppointments,
   getDoctorProfile,
+  getPatientReports,
   registerDoctor,
   rejectAppointment,
   updateDoctorProfile,
@@ -18,6 +19,7 @@ import { getPaymentsByAppointment } from "../services/paymentService";
 import { extractErrorMessage } from "../services/api";
 import { getUserInfo } from "../utils/auth";
 import { getOrCreateTelemedicineSession, startTelemedicineSession } from "../services/telemedicineService";
+import { notifyCustomBestEffort } from "../services/notificationService";
 
 const defaultSlot = {
   dayOfWeek: 1,
@@ -42,8 +44,18 @@ const defaultProfileForm = {
   bio: "",
   workingHoursStart: "09:00",
   workingHoursEnd: "17:00",
-  workingHoursTimezone: "UTC"
+  workingHoursTimezone: "Asia/Colombo"
 };
+
+const weekDays = [
+  { value: 0, label: "Sunday" },
+  { value: 1, label: "Monday" },
+  { value: 2, label: "Tuesday" },
+  { value: 3, label: "Wednesday" },
+  { value: 4, label: "Thursday" },
+  { value: 5, label: "Friday" },
+  { value: 6, label: "Saturday" }
+];
 
 const defaultPrescription = {
   appointmentId: "",
@@ -82,6 +94,18 @@ const fromDateTimeLocal = (value) => {
   return parsed.toISOString();
 };
 
+const formatRemainingTime = (milliseconds) => {
+  const totalMinutes = Math.max(1, Math.ceil(milliseconds / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${minutes}m`;
+};
+
 const consultationsWithPayment = (appointments, paymentByAppointment) => {
   return (Array.isArray(appointments) ? appointments : []).map((appointment) => ({
     appointment,
@@ -110,6 +134,9 @@ const DoctorDashboard = () => {
   const [patientNameById, setPatientNameById] = useState({});
   const [paymentByAppointment, setPaymentByAppointment] = useState({});
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [reportLoadingPatientId, setReportLoadingPatientId] = useState("");
+  const [selectedPatientForReports, setSelectedPatientForReports] = useState("");
+  const [patientReports, setPatientReports] = useState([]);
 
   const appointmentById = useMemo(
     () => Object.fromEntries(appointments.map((item) => [String(item._id), item])),
@@ -227,7 +254,7 @@ const DoctorDashboard = () => {
         bio: profileData?.bio || "",
         workingHoursStart: profileData?.workingHours?.start || "09:00",
         workingHoursEnd: profileData?.workingHours?.end || "17:00",
-        workingHoursTimezone: profileData?.workingHours?.timezone || "UTC"
+        workingHoursTimezone: profileData?.workingHours?.timezone || "Asia/Colombo"
       });
 
       const nextSlots = profileData?.availabilitySlots?.length
@@ -291,6 +318,17 @@ const DoctorDashboard = () => {
           }
         });
 
+        await notifyCustomBestEffort({
+          title: "Doctor Profile Created",
+          message: "Your doctor profile was created successfully.",
+          category: "profile",
+          recipients: {
+            doctorEmail: user?.email || null,
+            doctorPhone: user?.phoneNumber || null,
+            doctorName: profileForm.fullName || user?.fullName || "Doctor"
+          }
+        });
+
         setSuccess("Doctor profile created.");
         setProfileMissing(false);
         await loadData();
@@ -308,6 +346,17 @@ const DoctorDashboard = () => {
           start: profileForm.workingHoursStart,
           end: profileForm.workingHoursEnd,
           timezone: profileForm.workingHoursTimezone
+        }
+      });
+
+      await notifyCustomBestEffort({
+        title: "Doctor Profile Updated",
+        message: "Your doctor profile details were updated successfully.",
+        category: "profile",
+        recipients: {
+          doctorEmail: user?.email || null,
+          doctorPhone: user?.phoneNumber || null,
+          doctorName: profileForm.fullName || user?.fullName || "Doctor"
         }
       });
 
@@ -368,6 +417,17 @@ const DoctorDashboard = () => {
         unavailablePeriods: validUnavailablePeriods
       });
 
+      await notifyCustomBestEffort({
+        title: "Availability Updated",
+        message: "Your consultation availability was updated successfully.",
+        category: "availability",
+        recipients: {
+          doctorEmail: user?.email || null,
+          doctorPhone: user?.phoneNumber || null,
+          doctorName: profileForm.fullName || user?.fullName || "Doctor"
+        }
+      });
+
       setSuccess("Availability updated.");
       await loadData();
     } catch (err) {
@@ -415,6 +475,13 @@ const DoctorDashboard = () => {
       return;
     }
 
+    const joinAvailability = getConsultationJoinAvailability(appointment);
+    if (!joinAvailability.canJoin) {
+      const message = joinAvailability.message || "Consultation cannot be joined at this time.";
+      setError(message);
+      return;
+    }
+
     setJoiningAppointmentId(appointment._id);
     setError("");
     setSuccess("");
@@ -436,6 +503,72 @@ const DoctorDashboard = () => {
     } finally {
       setJoiningAppointmentId("");
     }
+  };
+
+  const handleViewPatientReports = async (patientId) => {
+    if (!patientId) {
+      return;
+    }
+
+    setReportLoadingPatientId(String(patientId));
+    setSelectedPatientForReports(String(patientId));
+    setError("");
+
+    try {
+      const reports = await getPatientReports(patientId);
+      setPatientReports(Array.isArray(reports) ? reports : []);
+    } catch (err) {
+      setPatientReports([]);
+      setError(extractErrorMessage(err, "Could not fetch patient reports"));
+    } finally {
+      setReportLoadingPatientId("");
+    }
+  };
+
+  const getConsultationJoinAvailability = (appointment) => {
+    const status = String(appointment?.status || "").toLowerCase();
+    if (!status || !["confirmed", "completed"].includes(status)) {
+      return {
+        canJoin: false,
+        message: `Consultation is not joinable while appointment status is ${status || "unknown"}.`
+      };
+    }
+
+    const scheduledAt = appointment?.scheduledAt ? new Date(appointment.scheduledAt) : null;
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+      return {
+        canJoin: false,
+        message: "Consultation start time is unavailable for this appointment."
+      };
+    }
+
+    const durationMinutes = Math.max(1, Number(appointment?.durationMinutes || 30));
+    const windowEnd = new Date(scheduledAt.getTime() + durationMinutes * 60000);
+    const now = new Date();
+
+    if (now < scheduledAt) {
+      const remaining = formatRemainingTime(scheduledAt.getTime() - now.getTime());
+      return {
+        canJoin: false,
+        message: `Consultation has not started yet. Starts in ${remaining} (${scheduledAt.toLocaleString()}).`
+      };
+    }
+
+    if (now > windowEnd) {
+      return {
+        canJoin: false,
+        message: `Consultation window ended at ${windowEnd.toLocaleString()}.`
+      };
+    }
+
+    return {
+      canJoin: true,
+      message: ""
+    };
+  };
+
+  const canJoinConsultation = (appointment) => {
+    return getConsultationJoinAvailability(appointment).canJoin;
   };
 
   const updateSlot = (index, field, value) => {
@@ -607,18 +740,49 @@ const DoctorDashboard = () => {
                   <td className="px-4 py-3">{item.durationMinutes || 30} min</td>
                   <td className="px-4 py-3"><span className="px-2 py-1 rounded-full text-xs bg-cyan-50 text-cyan-700">{item.status}</span></td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => handleJoinConsultation(item)}
-                      disabled={joiningAppointmentId === item._id}
-                      className="bg-teal-700 hover:bg-teal-800 disabled:bg-slate-400 text-white rounded-md px-3 py-1 inline-flex items-center gap-1"
-                    >
-                      <Video className="h-4 w-4" /> {joiningAppointmentId === item._id ? "Joining..." : "Join Call"}
-                    </button>
+                    {canJoinConsultation(item) ? null : (
+                      <p className="text-xs text-amber-700 mb-1">{getConsultationJoinAvailability(item).message}</p>
+                    )}
+                    <div className="inline-flex gap-2 justify-end flex-wrap">
+                      <button
+                        onClick={() => handleViewPatientReports(item.patientId)}
+                        disabled={reportLoadingPatientId === String(item.patientId)}
+                        className="bg-slate-700 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-md px-3 py-1"
+                      >
+                        {reportLoadingPatientId === String(item.patientId) ? "Loading Reports..." : "View Reports"}
+                      </button>
+                      <button
+                        onClick={() => handleJoinConsultation(item)}
+                        disabled={joiningAppointmentId === item._id || !canJoinConsultation(item)}
+                        className="bg-teal-700 hover:bg-teal-800 disabled:bg-slate-400 text-white rounded-md px-3 py-1 inline-flex items-center gap-1"
+                      >
+                        <Video className="h-4 w-4" /> {joiningAppointmentId === item._id ? "Joining..." : "Join Call"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {selectedPatientForReports ? (
+            <div className="border-t border-slate-200 p-4 bg-slate-50">
+              <h3 className="text-sm font-semibold text-slate-800">Reports for {resolvePatientName(selectedPatientForReports)}</h3>
+              {patientReports.length === 0 ? (
+                <p className="text-sm text-slate-500 mt-2">No reports found for this patient.</p>
+              ) : (
+                <ul className="mt-2 space-y-2 text-sm text-slate-700">
+                  {patientReports.map((report) => (
+                    <li key={report._id} className="bg-white border border-slate-200 rounded-md px-3 py-2">
+                      <p className="font-medium">{report.title || report.originalName}</p>
+                      <p className="text-xs text-slate-500">{report.documentType || "general"} | {new Date(report.uploadedAt || report.createdAt).toLocaleString()}</p>
+                      {report.notes ? <p className="text-xs text-slate-600">Notes: {report.notes}</p> : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -789,8 +953,12 @@ const DoctorDashboard = () => {
                 <p className="text-sm font-medium text-slate-700">Slot {index + 1}</p>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                   <div>
-                    <label className="text-xs text-slate-600">Day of week (0-6)</label>
-                    <input type="number" min="0" max="6" value={slot.dayOfWeek ?? 1} onChange={(e) => updateSlot(index, "dayOfWeek", Number(e.target.value))} className="w-full border border-slate-300 rounded-md px-3 py-2" />
+                    <label className="text-xs text-slate-600">Day of week</label>
+                    <select value={slot.dayOfWeek ?? 1} onChange={(e) => updateSlot(index, "dayOfWeek", Number(e.target.value))} className="w-full border border-slate-300 rounded-md px-3 py-2 bg-white">
+                      {weekDays.map((day) => (
+                        <option key={day.value} value={day.value}>{day.label}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="text-xs text-slate-600">Start time</label>
@@ -815,6 +983,7 @@ const DoctorDashboard = () => {
               </div>
             ))}
             <button type="button" onClick={addSlot} className="text-sm text-teal-700 hover:text-teal-800">+ Add slot</button>
+            <p className="text-xs text-slate-500">Tip: Add weekly repeating slots (e.g., Monday 09:00-17:00). Patients can only book within these slots and your unavailable periods.</p>
           </div>
 
           <div className="space-y-3">

@@ -20,9 +20,11 @@ const {
 } = require("../controllers/doctorController");
 const { protect, optionalProtect } = require("../middlewares/authMiddleware");
 const { authorize } = require("../middlewares/roleMiddleware");
+const internalServiceAuth = require("../middlewares/internalServiceAuth");
 
 // Public routes
-router.post("/register", optionalProtect, registerDoctor);
+router.post("/register", protect, authorize("doctor", "admin"), registerDoctor);
+router.post("/internal/register", internalServiceAuth, registerDoctor);
 router.get("/", optionalProtect, getAllDoctors);
 
 // Protected routes

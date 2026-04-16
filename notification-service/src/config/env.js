@@ -58,6 +58,8 @@ module.exports = {
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
   twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER || "",
   twilioVerifiedTo: process.env.TWILIO_VERIFIED_TO || "",
+  notificationMinIntervalMs: parseNumber(process.env.NOTIFICATION_MIN_INTERVAL_MS, 5000),
+  notificationSendDelayMs: parseNumber(process.env.NOTIFICATION_SEND_DELAY_MS, 0),
   authRequired,
   jwtSecret: process.env.JWT_SECRET || "",
   allowedServiceCallers: parseList(process.env.ALLOWED_SERVICE_CALLERS),

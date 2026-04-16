@@ -24,6 +24,7 @@ import {
 } from "../services/adminService";
 import { getAdminTransactions, verifyBankSlip } from "../services/paymentService";
 import { extractErrorMessage } from "../services/api";
+import { notifyCustomBestEffort } from "../services/notificationService";
 
 const AdminDashboard = () => {
   const [doctors, setDoctors] = useState([]);
@@ -106,13 +107,18 @@ const AdminDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const runDoctorAction = async (key, action, okMessage) => {
+  const runDoctorAction = async (key, action, okMessage, notificationPayload = null) => {
     setActionBusy(key);
     setError("");
     setSuccess("");
 
     try {
       await action();
+
+      if (notificationPayload) {
+        await notifyCustomBestEffort(notificationPayload);
+      }
+
       setSuccess(okMessage);
       await loadDoctors();
     } catch (err) {
@@ -136,6 +142,22 @@ const AdminDashboard = () => {
 
     try {
       await updatePatientStatusById(selectedPatientId, patientStatus);
+
+      await notifyCustomBestEffort({
+        title: "Patient Account Status Updated",
+        message: `Your account status is now ${patientStatus}.`,
+        category: "admin",
+        recipients: {
+          patientEmail: selectedPatient?.email || null,
+          patientPhone: selectedPatient?.phone || null,
+          patientName: selectedPatient?.fullName || "Patient"
+        },
+        extraPayload: {
+          status: patientStatus,
+          patientId: selectedPatientId
+        }
+      });
+
       setSuccess(`Patient status updated to ${patientStatus}.`);
       setSelectedPatientId("");
       setPatientSearch("");
@@ -366,28 +388,82 @@ const AdminDashboard = () => {
                 <td className="px-4 py-3 text-right">
                   <div className="inline-flex gap-2 flex-wrap justify-end">
                     <button
-                      onClick={() => runDoctorAction(`approve-${doctor._id}`, () => approveDoctor(doctor._id), "Doctor approved and activated.")}
+                      onClick={() => runDoctorAction(
+                        `approve-${doctor._id}`,
+                        () => approveDoctor(doctor._id),
+                        "Doctor approved and activated.",
+                        {
+                          title: "Doctor Account Approved",
+                          message: "Your doctor account has been approved and activated.",
+                          category: "admin",
+                          recipients: {
+                            doctorEmail: doctor.email || null,
+                            doctorName: doctor.fullName || "Doctor"
+                          }
+                        }
+                      )}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-md px-3 py-1 inline-flex items-center gap-1 disabled:opacity-60"
                       disabled={Boolean(actionBusy)}
                     >
                       {isBusy(`approve-${doctor._id}`) ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />} Approve
                     </button>
                     <button
-                      onClick={() => runDoctorAction(`suspend-${doctor._id}`, () => suspendDoctor(doctor._id), "Doctor suspended.")}
+                      onClick={() => runDoctorAction(
+                        `suspend-${doctor._id}`,
+                        () => suspendDoctor(doctor._id),
+                        "Doctor suspended.",
+                        {
+                          title: "Doctor Account Suspended",
+                          message: "Your doctor account has been suspended by administration.",
+                          category: "admin",
+                          recipients: {
+                            doctorEmail: doctor.email || null,
+                            doctorName: doctor.fullName || "Doctor"
+                          }
+                        }
+                      )}
                       className="bg-rose-600 hover:bg-rose-700 text-white rounded-md px-3 py-1 inline-flex items-center gap-1 disabled:opacity-60"
                       disabled={Boolean(actionBusy)}
                     >
                       {isBusy(`suspend-${doctor._id}`) ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />} Suspend
                     </button>
                     <button
-                      onClick={() => runDoctorAction(`inactive-${doctor._id}`, () => setDoctorStatus(doctor._id, "inactive"), "Doctor marked as inactive.")}
+                      onClick={() => runDoctorAction(
+                        `inactive-${doctor._id}`,
+                        () => setDoctorStatus(doctor._id, "inactive"),
+                        "Doctor marked as inactive.",
+                        {
+                          title: "Doctor Account Marked Inactive",
+                          message: "Your doctor account has been marked as inactive by administration.",
+                          category: "admin",
+                          recipients: {
+                            doctorEmail: doctor.email || null,
+                            doctorName: doctor.fullName || "Doctor"
+                          }
+                        }
+                      )}
                       className="bg-slate-600 hover:bg-slate-700 text-white rounded-md px-3 py-1 inline-flex items-center gap-1 disabled:opacity-60"
                       disabled={Boolean(actionBusy)}
                     >
                       {isBusy(`inactive-${doctor._id}`) ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserCog className="h-4 w-4" />} Inactive
                     </button>
                     <button
-                      onClick={() => runDoctorAction(`toggle-verify-${doctor._id}`, () => setDoctorVerification(doctor._id, !doctor.verified), doctor.verified ? "Doctor verification removed." : "Doctor verified.")}
+                      onClick={() => runDoctorAction(
+                        `toggle-verify-${doctor._id}`,
+                        () => setDoctorVerification(doctor._id, !doctor.verified),
+                        doctor.verified ? "Doctor verification removed." : "Doctor verified.",
+                        {
+                          title: doctor.verified ? "Doctor Verification Removed" : "Doctor Verified",
+                          message: doctor.verified
+                            ? "Your doctor verification badge has been removed by administration."
+                            : "Your doctor account has been verified by administration.",
+                          category: "admin",
+                          recipients: {
+                            doctorEmail: doctor.email || null,
+                            doctorName: doctor.fullName || "Doctor"
+                          }
+                        }
+                      )}
                       className="bg-amber-600 hover:bg-amber-700 text-white rounded-md px-3 py-1 inline-flex items-center gap-1 disabled:opacity-60"
                       disabled={Boolean(actionBusy)}
                     >

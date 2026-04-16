@@ -3,6 +3,7 @@ const path = require("path");
 const mongoose = require("mongoose");
 const Patient = require("../models/patientModel");
 const Report = require("../models/reportModel");
+const env = require("../config/env");
 
 class ServiceError extends Error {
   constructor(statusCode, message, details = null) {
@@ -49,6 +50,43 @@ const assertOwnerOrAdminOrDoctor = (patient, user) => {
 const sanitizePatient = (patientDoc) => {
   const patient = patientDoc.toObject ? patientDoc.toObject() : patientDoc;
   return patient;
+};
+
+const syncAuthUserProfile = async ({ userId, fullName, phone }) => {
+  if (!userId || !env.authServiceUrl || !env.internalServiceApiKey) {
+    return;
+  }
+
+  const payload = {};
+
+  if (typeof fullName === "string" && fullName.trim()) {
+    payload.fullName = fullName.trim();
+  }
+
+  if (typeof phone === "string" && phone.trim()) {
+    payload.phoneNumber = phone.trim();
+  }
+
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+
+  const response = await fetch(`${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "x-internal-api-key": env.internalServiceApiKey
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(env.requestTimeoutMs)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new ServiceError(502, "Failed to sync patient profile with auth service", {
+      reason: errorText || response.statusText
+    });
+  }
 };
 
 const registerPatient = async ({ payload, actor }) => {
@@ -131,6 +169,18 @@ const updateMyProfile = async ({ user, payload }) => {
       patient[field] = payload[field];
     }
   });
+
+  const shouldSyncAuthProfile =
+    Object.prototype.hasOwnProperty.call(payload, "phone") ||
+    Object.prototype.hasOwnProperty.call(payload, "fullName");
+
+  if (shouldSyncAuthProfile) {
+    await syncAuthUserProfile({
+      userId: user.id,
+      fullName: patient.fullName,
+      phone: patient.phone
+    });
+  }
 
   await patient.save();
   return sanitizePatient(patient);

@@ -78,6 +78,30 @@ const registerValidation = [
 
       return true;
     }),
+  body("licenseNumber")
+    .optional()
+    .isString()
+    .withMessage("licenseNumber must be a string")
+    .bail()
+    .trim()
+    .custom((licenseNumber, { req }) => {
+      const role = req.body.role || "patient";
+
+      if (role !== "Doctor") {
+        return true;
+      }
+
+      if (!licenseNumber) {
+        throw new Error("licenseNumber is required when role is Doctor");
+      }
+
+      return true;
+    }),
+  body("qualification")
+    .optional()
+    .isString()
+    .withMessage("qualification must be a string")
+    .trim(),
   validateRequest
 ];
 
@@ -115,6 +139,16 @@ router.get("/me", authMiddleware, authController.me);
 router.get("/validate-token", authMiddleware, authController.validateToken);
 router.get("/users", authMiddleware, roleMiddleware("Admin"), authController.listUsers);
 router.get("/internal/users/:id", internalServiceAuth, authController.getInternalUserById);
+router.patch(
+  "/internal/users/:id",
+  internalServiceAuth,
+  [
+    body("fullName").optional().isString().trim().isLength({ min: 3, max: 120 }),
+    body("phoneNumber").optional().isString().trim().matches(/^\+?[0-9]{9,15}$/),
+    validateRequest
+  ],
+  authController.updateInternalUserById
+);
 
 router.get("/patient-only", authMiddleware, roleMiddleware("patient"), (req, res) => {
   return res.status(200).json({

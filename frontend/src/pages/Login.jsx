@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Activity, ShieldCheck } from "lucide-react";
 import { login } from "../services/authService";
 import { extractErrorMessage } from "../services/api";
@@ -11,6 +11,9 @@ const Login = () => {
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
+    const location = useLocation();
+
+    const registrationSuccessMessage = location.state?.registrationSuccessMessage || "";
 
     const handleLogin = async (e) => {
         e.preventDefault();
@@ -82,6 +85,7 @@ const Login = () => {
                             </div>
                         </div>
 
+                        {registrationSuccessMessage ? <p className="text-sm text-emerald-700">{registrationSuccessMessage}</p> : null}
                         {error ? <p className="text-sm text-rose-600">{error}</p> : null}
 
                         <div>
