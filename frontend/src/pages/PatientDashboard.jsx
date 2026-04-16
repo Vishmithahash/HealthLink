@@ -1,16 +1,27 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Calendar, FileText, Upload, User, Bot, Stethoscope, CircleX, LoaderCircle, Trash2 } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { FileText, Upload, User, Bot, Stethoscope, CircleX, LoaderCircle, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { Elements } from "@stripe/react-stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
 import { getUserInfo } from "../utils/auth";
 import {
   deletePatientReport,
   getPatientProfile,
   getPatientPrescriptions,
   getPatientReports,
+  registerPatient,
   updatePatientProfile,
   uploadMedicalReport
 } from "../services/patientService";
 import { bookAppointment, cancelAppointment, getDoctors, getPatientAppointments } from "../services/appointmentService";
+import PaymentForm from "../components/PaymentForm";
+import {
+  createStripeIntent,
+  getPaymentsByAppointment,
+  uploadBankSlip,
+  verifyStripePayment
+} from "../services/paymentService";
 import { extractErrorMessage } from "../services/api";
 import { getOrCreateTelemedicineSession, startTelemedicineSession } from "../services/telemedicineService";
 import SymptomChecker from "./SymptomChecker";
@@ -28,6 +39,11 @@ const parseCsv = (value) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const stripePublishableKey =
+  import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ||
+  "pk_test_51TMXodRBX3qRpzeCJDDmdjrkbsHOKOZU8jVwVIMNUR9P3zrX9XQ0m9D3ZB37houeTAaBeeRh7koiWmZjUC4DCNQh00N1ffLx9P";
+const stripePromise = stripePublishableKey ? loadStripe(stripePublishableKey) : null;
+
 const PatientDashboard = () => {
   const user = getUserInfo();
   const authUserId = String(user?.id || user?.userId || "");
@@ -42,6 +58,20 @@ const PatientDashboard = () => {
   const [success, setSuccess] = useState("");
   const [joiningAppointmentId, setJoiningAppointmentId] = useState("");
   const [patientIdentifier, setPatientIdentifier] = useState("");
+  const [profileMissing, setProfileMissing] = useState(false);
+  const [patientAccountStatus, setPatientAccountStatus] = useState("active");
+  const [paymentStatusByAppointment, setPaymentStatusByAppointment] = useState({});
+  const [selectedAppointmentForPayment, setSelectedAppointmentForPayment] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState("card");
+  const [paymentAmount, setPaymentAmount] = useState(0);
+  const [paymentCurrency, setPaymentCurrency] = useState("LKR");
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentClientSecret, setPaymentClientSecret] = useState("");
+  const [paymentRecordId, setPaymentRecordId] = useState("");
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+  const [slipFile, setSlipFile] = useState(null);
+  const [toast, setToast] = useState({ type: "", message: "" });
 
   const [profile, setProfile] = useState({
     fullName: user?.fullName || "",
@@ -74,6 +104,8 @@ const PatientDashboard = () => {
     notes: "",
     consultationId: ""
   });
+  const reportFileInputRef = useRef(null);
+  const bookingRestricted = ["inactive", "suspended"].includes(String(patientAccountStatus || "").toLowerCase());
 
   const doctorOptions = useMemo(() => {
     return doctors.map((doctor) => ({
@@ -96,6 +128,43 @@ const PatientDashboard = () => {
   const resolveDoctorName = (doctorId) => {
     const key = String(doctorId || "");
     return doctorNameById.get(key) || doctorId || "Unknown doctor";
+  };
+
+  const resolveAppointmentFee = (appointment) => {
+    const doctor = doctors.find((entry) => String(entry?.userId || entry?._id || "") === String(appointment?.doctorId || ""));
+    const candidates = [
+      appointment?.consultationFee,
+      appointment?.fee,
+      appointment?.amount,
+      doctor?.consultationFee
+    ];
+
+    const resolved = candidates
+      .map((value) => Number(value))
+      .find((value) => Number.isFinite(value) && value > 0);
+
+    return resolved || 1000;
+  };
+
+  const loadPaymentStatuses = async (appointmentList) => {
+    const entries = await Promise.all(
+      (Array.isArray(appointmentList) ? appointmentList : []).map(async (appointment) => {
+        const appointmentId = String(appointment?._id || "");
+        if (!appointmentId) {
+          return [appointmentId, null];
+        }
+
+        try {
+          const payments = await getPaymentsByAppointment(appointmentId);
+          const latest = Array.isArray(payments) && payments.length > 0 ? payments[0] : null;
+          return [appointmentId, latest?.status || null];
+        } catch {
+          return [appointmentId, null];
+        }
+      })
+    );
+
+    setPaymentStatusByAppointment(Object.fromEntries(entries));
   };
 
   const appointmentById = useMemo(() => {
@@ -141,7 +210,17 @@ const PatientDashboard = () => {
     setError("");
 
     try {
-      const profileData = await getPatientProfile().catch(() => null);
+      let profileData = null;
+      try {
+        profileData = await getPatientProfile();
+        setProfileMissing(false);
+      } catch (profileError) {
+        if (profileError?.response?.status === 404) {
+          setProfileMissing(true);
+        } else {
+          throw profileError;
+        }
+      }
 
       const patientIdCandidates = [
         authUserId,
@@ -172,11 +251,12 @@ const PatientDashboard = () => {
 
       const [doctorData, reportData, prescriptionData] = await Promise.all([
         getDoctors({}).catch(() => []),
-        getPatientReports().catch(() => []),
-        getPatientPrescriptions().catch(() => [])
+        profileData ? getPatientReports().catch(() => []) : Promise.resolve([]),
+        profileData ? getPatientPrescriptions().catch(() => []) : Promise.resolve([])
       ]);
 
       if (profileData) {
+        setPatientAccountStatus(String(profileData.status || "active").toLowerCase());
         setProfile((prev) => ({
           ...prev,
           fullName: profileData.fullName || prev.fullName,
@@ -196,9 +276,12 @@ const PatientDashboard = () => {
           emergencyContactRelationship: profileData?.emergencyContact?.relationship || "",
           emergencyContactPhone: profileData?.emergencyContact?.phone || ""
         }));
+      } else {
+        setPatientAccountStatus("active");
       }
 
       setAppointments(Array.isArray(appointmentData) ? appointmentData : []);
+      await loadPaymentStatuses(appointmentData);
       setDoctors(Array.isArray(doctorData?.data) ? doctorData.data : Array.isArray(doctorData) ? doctorData : []);
       setReports(Array.isArray(reportData) ? reportData : []);
       setPrescriptions(Array.isArray(prescriptionData) ? prescriptionData : []);
@@ -219,6 +302,14 @@ const PatientDashboard = () => {
 
   const handleBookAppointment = async (event) => {
     event.preventDefault();
+
+    if (bookingRestricted) {
+      const message = `Booking is disabled while your account is ${patientAccountStatus}. Please contact support.`;
+      setError(message);
+      setToast({ type: "error", message });
+      return;
+    }
+
     setBooking(true);
     setError("");
     setSuccess("");
@@ -233,11 +324,13 @@ const PatientDashboard = () => {
       });
 
       setSuccess("Appointment request submitted successfully.");
+      setToast({ type: "success", message: "Appointment request submitted successfully." });
       setBookingForm({ doctorId: "", specialty: "", scheduledAt: "", durationMinutes: 30, reason: "" });
       await loadDashboard();
       setActiveTab("appointments");
     } catch (err) {
       setError(extractErrorMessage(err, "Could not create appointment"));
+      setToast({ type: "error", message: extractErrorMessage(err, "Could not create appointment") });
     } finally {
       setBooking(false);
     }
@@ -249,9 +342,11 @@ const PatientDashboard = () => {
     try {
       await cancelAppointment(appointmentId, { cancelledReason: "Cancelled by patient" });
       setSuccess("Appointment cancelled.");
+      setToast({ type: "success", message: "Appointment cancelled." });
       await loadDashboard();
     } catch (err) {
       setError(extractErrorMessage(err, "Could not cancel appointment"));
+      setToast({ type: "error", message: extractErrorMessage(err, "Could not cancel appointment") });
     }
   };
 
@@ -299,7 +394,7 @@ const PatientDashboard = () => {
     setSuccess("");
 
     try {
-      await updatePatientProfile({
+      const payload = {
         fullName: profile.fullName,
         dob: profile.dob || null,
         phone: profile.phone,
@@ -313,11 +408,34 @@ const PatientDashboard = () => {
           relationship: profile.emergencyContactRelationship,
           phone: profile.emergencyContactPhone
         }
-      });
+      };
 
-      setSuccess("Profile updated successfully.");
+      if (profileMissing) {
+        await registerPatient({
+          userId: authUserId,
+          fullName: payload.fullName,
+          dob: payload.dob,
+          phone: payload.phone,
+          address: payload.address,
+          gender: payload.gender,
+          bloodGroup: payload.bloodGroup,
+          allergies: payload.allergies,
+          medicalHistory: payload.medicalHistory,
+          emergencyContact: payload.emergencyContact
+        });
+
+        setSuccess("Patient profile created successfully.");
+        setToast({ type: "success", message: "Patient profile created successfully." });
+        setProfileMissing(false);
+        await loadDashboard();
+      } else {
+        await updatePatientProfile(payload);
+        setSuccess("Profile updated successfully.");
+        setToast({ type: "success", message: "Profile updated successfully." });
+      }
     } catch (err) {
-      setError(extractErrorMessage(err, "Could not update profile"));
+      setError(extractErrorMessage(err, profileMissing ? "Could not create profile" : "Could not update profile"));
+      setToast({ type: "error", message: extractErrorMessage(err, profileMissing ? "Could not create profile" : "Could not update profile") });
     } finally {
       setSavingProfile(false);
     }
@@ -327,6 +445,7 @@ const PatientDashboard = () => {
     event.preventDefault();
     if (!file) {
       setError("Please select a report file to upload.");
+      reportFileInputRef.current?.click();
       return;
     }
 
@@ -346,11 +465,13 @@ const PatientDashboard = () => {
     try {
       await uploadMedicalReport(formData);
       setSuccess("Medical report uploaded.");
+      setToast({ type: "success", message: "Medical report uploaded." });
       setFile(null);
       setReportMeta({ documentType: "medical_report", title: "", notes: "", consultationId: "" });
       await loadDashboard();
     } catch (err) {
       setError(extractErrorMessage(err, "Could not upload report"));
+      setToast({ type: "error", message: extractErrorMessage(err, "Could not upload report") });
     } finally {
       setUploading(false);
     }
@@ -364,9 +485,11 @@ const PatientDashboard = () => {
     try {
       await deletePatientReport(reportId);
       setSuccess("Report deleted.");
+      setToast({ type: "success", message: "Report deleted." });
       await loadDashboard();
     } catch (err) {
       setError(extractErrorMessage(err, "Could not delete report"));
+      setToast({ type: "error", message: extractErrorMessage(err, "Could not delete report") });
     } finally {
       setDeletingReportId("");
     }
@@ -380,6 +503,247 @@ const PatientDashboard = () => {
       specialty: selected?.specialty || ""
     }));
   };
+
+  const closePaymentModal = () => {
+    setPaymentModalOpen(false);
+    setSelectedAppointmentForPayment(null);
+    setPaymentMethod("card");
+    setPaymentClientSecret("");
+    setPaymentRecordId("");
+    setPaymentBusy(false);
+    setPaymentError("");
+    setSlipFile(null);
+  };
+
+  const openPaymentModal = (appointment) => {
+    const amount = resolveAppointmentFee(appointment);
+    setSelectedAppointmentForPayment(appointment);
+    setPaymentAmount(amount);
+    setPaymentCurrency("LKR");
+    setPaymentMethod("card");
+    setPaymentClientSecret("");
+    setPaymentRecordId("");
+    setPaymentError("");
+    setSlipFile(null);
+    setPaymentModalOpen(true);
+  };
+
+  const startCardPayment = async () => {
+    if (!selectedAppointmentForPayment?._id) {
+      return;
+    }
+
+    setPaymentBusy(true);
+    setPaymentError("");
+
+    try {
+      const intent = await createStripeIntent({
+        appointmentId: selectedAppointmentForPayment._id,
+        amount: Number(paymentAmount),
+        currency: paymentCurrency
+      });
+
+      setPaymentClientSecret(intent?.clientSecret || "");
+      setPaymentRecordId(String(intent?.paymentId || ""));
+    } catch (err) {
+      setPaymentError(extractErrorMessage(err, "Could not initialize card payment"));
+    } finally {
+      setPaymentBusy(false);
+    }
+  };
+
+  const handleCardPaymentSuccess = async (paymentIntent) => {
+    setPaymentBusy(true);
+    setPaymentError("");
+
+    try {
+      await verifyStripePayment({
+        paymentId: paymentRecordId || undefined,
+        paymentIntentId: paymentIntent?.id
+      });
+
+      setSuccess("Payment completed successfully.");
+      setToast({ type: "success", message: "Payment completed successfully." });
+      closePaymentModal();
+      await loadDashboard();
+    } catch (err) {
+      setPaymentError(extractErrorMessage(err, "Payment completed in Stripe but verification failed"));
+      setToast({ type: "error", message: extractErrorMessage(err, "Payment completed in Stripe but verification failed") });
+    } finally {
+      setPaymentBusy(false);
+    }
+  };
+
+  const handleUploadSlipPayment = async () => {
+    if (!selectedAppointmentForPayment?._id || !slipFile) {
+      setPaymentError("Please choose a slip image before submitting.");
+      return;
+    }
+
+    setPaymentBusy(true);
+    setPaymentError("");
+
+    const formData = new FormData();
+    formData.append("appointmentId", selectedAppointmentForPayment._id);
+    formData.append("amount", String(Number(paymentAmount)));
+    formData.append("currency", paymentCurrency);
+    formData.append("slip", slipFile);
+
+    try {
+      await uploadBankSlip(formData);
+      setSuccess("Slip uploaded. Waiting for admin verification.");
+      setToast({ type: "success", message: "Slip uploaded. Waiting for admin verification." });
+      closePaymentModal();
+      await loadDashboard();
+    } catch (err) {
+      setPaymentError(extractErrorMessage(err, "Could not upload payment slip"));
+      setToast({ type: "error", message: extractErrorMessage(err, "Could not upload payment slip") });
+    } finally {
+      setPaymentBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!paymentModalOpen) {
+      return;
+    }
+
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [paymentModalOpen]);
+
+  useEffect(() => {
+    if (!toast.message) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setToast({ type: "", message: "" });
+    }, 3000);
+
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const paymentModal = paymentModalOpen && selectedAppointmentForPayment ? (
+    <div className="fixed inset-0 z-70 bg-black/45 backdrop-blur-[1px] overflow-y-auto p-4">
+      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4 my-8 mx-auto max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">Pay Appointment</h3>
+            <p className="text-sm text-slate-600 mt-1">
+              {resolveDoctorName(selectedAppointmentForPayment.doctorId)} | {new Date(selectedAppointmentForPayment.scheduledAt).toLocaleString()}
+            </p>
+          </div>
+          <button onClick={closePaymentModal} className="text-slate-500 hover:text-slate-700">Close</button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm text-slate-700">Amount</label>
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              value={paymentAmount}
+              onChange={(e) => setPaymentAmount(Number(e.target.value || 0))}
+              className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+            />
+          </div>
+          <div>
+            <label className="text-sm text-slate-700">Currency</label>
+            <select
+              value={paymentCurrency}
+              onChange={(e) => setPaymentCurrency(e.target.value)}
+              className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+            >
+              <option value="LKR">LKR</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="inline-flex rounded-lg border border-slate-200 p-1 bg-slate-50">
+          <button
+            type="button"
+            onClick={() => {
+              setPaymentMethod("card");
+              setPaymentError("");
+            }}
+            className={`px-3 py-1.5 text-sm rounded-md ${paymentMethod === "card" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+          >
+            Card (Stripe)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPaymentMethod("bank");
+              setPaymentError("");
+            }}
+            className={`px-3 py-1.5 text-sm rounded-md ${paymentMethod === "bank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+          >
+            Bank Slip
+          </button>
+        </div>
+
+        {paymentError ? <p className="text-sm text-rose-600">{paymentError}</p> : null}
+
+        {paymentMethod === "card" ? (
+          <div className="space-y-3">
+            {!paymentClientSecret ? (
+              <button
+                type="button"
+                disabled={paymentBusy || !stripePromise}
+                onClick={startCardPayment}
+                className="bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
+              >
+                {paymentBusy ? "Initializing..." : "Initialize Card Payment"}
+              </button>
+            ) : null}
+
+            {paymentClientSecret ? (
+              stripePromise ? (
+                <Elements stripe={stripePromise} options={{ clientSecret: paymentClientSecret }}>
+                  <PaymentForm
+                    amount={paymentAmount}
+                    currency={paymentCurrency}
+                    clientSecret={paymentClientSecret}
+                    onPaymentSuccess={handleCardPaymentSuccess}
+                    onCancel={closePaymentModal}
+                  />
+                </Elements>
+              ) : (
+                <p className="text-sm text-rose-600">Stripe key is missing. Add VITE_STRIPE_PUBLISHABLE_KEY to frontend environment.</p>
+              )
+            ) : null}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm text-slate-700">Upload bank transfer slip (jpg/png)</label>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/jpg"
+                onChange={(e) => setSlipFile(e.target.files?.[0] || null)}
+                className="block mt-1"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={paymentBusy || !slipFile}
+              onClick={handleUploadSlipPayment}
+              className="bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
+            >
+              {paymentBusy ? "Uploading..." : "Submit Slip"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -402,8 +766,15 @@ const PatientDashboard = () => {
         </nav>
       </div>
 
-      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-      {success ? <p className="text-sm text-emerald-700">{success}</p> : null}
+      {error ? <p className="hidden text-sm text-rose-600">{error}</p> : null}
+      {success ? <p className="hidden text-sm text-emerald-700">{success}</p> : null}
+      {profileMissing ? (
+        <p className="text-sm text-amber-700">Patient profile is missing for this account. Complete the Profile tab once to unlock prescriptions and records.</p>
+      ) : null}
+      <div className={`rounded-lg border px-4 py-3 text-sm ${bookingRestricted ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+        Account status: <span className="font-semibold capitalize">{patientAccountStatus || "active"}</span>
+        {bookingRestricted ? " | Booking is disabled for this account." : " | Booking is enabled."}
+      </div>
       {loading ? (
         <div className="flex items-center gap-2 text-slate-600"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading dashboard...</div>
       ) : null}
@@ -418,17 +789,26 @@ const PatientDashboard = () => {
                 <th className="px-4 py-3">Schedule</th>
                 <th className="px-4 py-3">Duration</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Payment</th>
                 <th className="px-4 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
               {appointments.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-slate-500" colSpan={6}>No appointments yet.</td>
+                  <td className="px-4 py-6 text-slate-500" colSpan={7}>No appointments yet.</td>
                 </tr>
               ) : (
                 appointments.map((appointment) => (
                   <tr key={appointment._id} className="border-t border-slate-100 text-sm">
+                    {(() => {
+                      const paymentStatus = paymentStatusByAppointment[String(appointment._id)] || appointment.paymentStatus || "pending";
+                      const canPay =
+                        ["pending", "confirmed"].includes(String(appointment.status || "").toLowerCase()) &&
+                        !["succeeded", "pending_verification"].includes(String(paymentStatus || "").toLowerCase());
+
+                      return (
+                        <>
                     <td className="px-4 py-3">{resolveDoctorName(appointment.doctorId)}</td>
                     <td className="px-4 py-3">{appointment.specialty}</td>
                     <td className="px-4 py-3">{new Date(appointment.scheduledAt).toLocaleString()}</td>
@@ -436,22 +816,36 @@ const PatientDashboard = () => {
                     <td className="px-4 py-3">
                       <span className="px-2 py-1 rounded-full text-xs bg-cyan-50 text-cyan-700">{appointment.status}</span>
                     </td>
+                    <td className="px-4 py-3">
+                      <span className="px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">{paymentStatus}</span>
+                    </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="inline-flex gap-2">
+                      <div className="inline-flex gap-2 items-center">
+                        {canPay ? (
+                          <button
+                            onClick={() => openPaymentModal(appointment)}
+                            className="px-2.5 py-1 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          >
+                            Pay
+                          </button>
+                        ) : null}
                         <button
                           onClick={() => handleJoinConsultation(appointment)}
                           disabled={!canJoinConsultation(appointment) || joiningAppointmentId === appointment._id}
-                          className="text-teal-700 hover:text-teal-800 disabled:text-slate-400"
+                          className="px-2.5 py-1 rounded-md border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-50"
                         >
                           {joiningAppointmentId === appointment._id ? "Joining..." : "Join"}
                         </button>
                         {(appointment.status === "pending" || appointment.status === "confirmed") ? (
-                          <button onClick={() => handleCancelAppointment(appointment._id)} className="text-rose-600 hover:text-rose-700 inline-flex items-center gap-1">
+                          <button onClick={() => handleCancelAppointment(appointment._id)} className="px-2.5 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 inline-flex items-center gap-1">
                             <CircleX className="h-4 w-4" /> Cancel
                           </button>
                         ) : null}
                       </div>
                     </td>
+                        </>
+                      );
+                    })()}
                   </tr>
                 ))
               )}
@@ -460,9 +854,17 @@ const PatientDashboard = () => {
         </div>
       ) : null}
 
+      {paymentModal ? createPortal(paymentModal, document.body) : null}
+
       {activeTab === "book" ? (
         <form onSubmit={handleBookAppointment} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-2xl">
           <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Book Appointment</h2>
+          {bookingRestricted ? (
+            <p className="text-sm text-rose-700 rounded-md border border-rose-200 bg-rose-50 px-3 py-2">
+              Booking is disabled while your account is {patientAccountStatus}. Contact support to reactivate your account.
+            </p>
+          ) : null}
+          <fieldset disabled={bookingRestricted} className="space-y-4 disabled:opacity-60">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="text-sm text-slate-700">Search doctor by name</label>
@@ -554,6 +956,7 @@ const PatientDashboard = () => {
           <button disabled={booking} type="submit" className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">
             {booking ? "Submitting..." : "Submit Appointment"}
           </button>
+          </fieldset>
         </form>
       ) : null}
 
@@ -614,7 +1017,7 @@ const PatientDashboard = () => {
               <input value={profile.emergencyContactPhone} onChange={(e) => setProfile((prev) => ({ ...prev, emergencyContactPhone: e.target.value }))} className="w-full border border-slate-300 rounded-md px-3 py-2" />
             </div>
           </div>
-          <button disabled={savingProfile} type="submit" className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">{savingProfile ? "Saving..." : "Save Profile"}</button>
+          <button disabled={savingProfile} type="submit" className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">{savingProfile ? "Saving..." : profileMissing ? "Create Profile" : "Save Profile"}</button>
         </form>
       ) : null}
 
@@ -640,7 +1043,23 @@ const PatientDashboard = () => {
             </div>
             <div>
               <label className="text-sm text-slate-700">Report file</label>
-              <input type="file" required onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              <div className="mt-1 flex items-center gap-3">
+                <input
+                  ref={reportFileInputRef}
+                  type="file"
+                  required
+                  className="hidden"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                />
+                <button
+                  type="button"
+                  onClick={() => reportFileInputRef.current?.click()}
+                  className="px-3 py-2 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                >
+                  Choose File
+                </button>
+                <span className="text-sm text-slate-500">{file?.name || "No file chosen"}</span>
+              </div>
             </div>
             <button disabled={uploading || !file} type="submit" className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">{uploading ? "Uploading..." : "Upload"}</button>
           </form>
@@ -698,9 +1117,13 @@ const PatientDashboard = () => {
         </div>
       ) : null}
 
-      <div className="text-xs text-slate-500 inline-flex items-center gap-1">
-        <Calendar className="h-3.5 w-3.5" /> Live data is loaded from auth, appointment, doctor, and patient services.
-      </div>
+      {toast.message ? (
+        <div className="fixed top-20 right-4 z-80">
+          <div className={`rounded-lg px-4 py-3 shadow-lg border text-sm ${toast.type === "error" ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-emerald-50 border-emerald-200 text-emerald-700"}`}>
+            {toast.message}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

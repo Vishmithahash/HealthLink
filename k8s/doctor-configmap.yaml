@@ -5,7 +5,7 @@ metadata:
 data:
   PORT: "4002"
   CORS_ORIGIN: "http://localhost:3000"
-  AUTH_SERVICE_URL: "http://auth-service:4000"
+  AUTH_SERVICE_URL: "http://auth-service"
   INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
   APPOINTMENT_SERVICE_URL: "http://appointment-service"
   PATIENT_SERVICE_URL: "http://patient-service"

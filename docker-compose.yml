@@ -8,10 +8,11 @@ services:
     volumes:
       - mongo_data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: ["CMD-SHELL", "mongosh --quiet --host 127.0.0.1 --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1 > /dev/null"]
+      interval: 15s
+      timeout: 30s
+      start_period: 40s
+      retries: 5
 
   auth-service:
     build:
@@ -55,8 +56,33 @@ services:
       ALLOW_DOCTOR_FALLBACK: "true"
       DOCTOR_SERVICE_URL: http://doctor-service:4002
       TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
-      PAYMENT_SERVICE_URL: http://host.docker.internal:3004
+      PAYMENT_SERVICE_URL: http://payment-service:4006
       NOTIFICATION_SERVICE_URL: http://host.docker.internal:3005
+      REQUEST_TIMEOUT_MS: 5000
+
+  payment-service:
+    build:
+      context: ./payment-service
+    image: healthlink-payment-service:local
+    container_name: healthlink-payment-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      appointment-service:
+        condition: service_started
+    ports:
+      - "4006:4006"
+    env_file:
+      - ./payment-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4006
+      APPOINTMENT_SERVICE_URL: http://appointment-service:4001
+      DOCTOR_SERVICE_URL: http://doctor-service:4002
+      CORS_ORIGIN: http://localhost:3000
       REQUEST_TIMEOUT_MS: 5000
 
   telemedicine-service:
@@ -128,7 +154,7 @@ services:
     environment:
       NODE_ENV: development
       PORT: 4002
-      MONGODB_URI: mongodb://mongo:27017/doctor-db
+      MONGODB_URI: mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/doctor-db?appName=Cluster0
       JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
       AUTH_SERVICE_URL: http://auth-service:4000
       INTERNAL_SERVICE_API_KEY: healthlink-internal-key
@@ -155,7 +181,7 @@ services:
     environment:
       NODE_ENV: development
       PORT: 4003
-      MONGODB_URI: mongodb://mongo:27017/patient-db
+      MONGODB_URI: mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/patient-db?appName=Cluster0
       JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
       AUTH_SERVICE_URL: http://auth-service:4000
       INTERNAL_SERVICE_API_KEY: healthlink-internal-key

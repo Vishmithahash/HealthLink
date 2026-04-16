@@ -9,10 +9,12 @@ import {
   createPrescription,
   getDoctorAppointments,
   getDoctorProfile,
+  registerDoctor,
   rejectAppointment,
   updateDoctorProfile,
   updateAvailability
 } from "../services/doctorService";
+import { getPaymentsByAppointment } from "../services/paymentService";
 import { extractErrorMessage } from "../services/api";
 import { getUserInfo } from "../utils/auth";
 import { getOrCreateTelemedicineSession, startTelemedicineSession } from "../services/telemedicineService";
@@ -33,6 +35,7 @@ const defaultUnavailablePeriod = {
 const defaultProfileForm = {
   fullName: "",
   specialization: "",
+  licenseNumber: "",
   qualification: "",
   experienceYears: 0,
   consultationFee: 0,
@@ -79,12 +82,20 @@ const fromDateTimeLocal = (value) => {
   return parsed.toISOString();
 };
 
+const consultationsWithPayment = (appointments, paymentByAppointment) => {
+  return (Array.isArray(appointments) ? appointments : []).map((appointment) => ({
+    appointment,
+    payment: paymentByAppointment[String(appointment?._id || "")] || null
+  }));
+};
+
 const DoctorDashboard = () => {
   const user = getUserInfo();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("requests");
   const [appointments, setAppointments] = useState([]);
   const [profile, setProfile] = useState(null);
+  const [profileMissing, setProfileMissing] = useState(false);
   const [profileForm, setProfileForm] = useState(defaultProfileForm);
   const [availabilitySlots, setAvailabilitySlots] = useState([defaultSlot]);
   const [unavailablePeriods, setUnavailablePeriods] = useState([defaultUnavailablePeriod]);
@@ -97,6 +108,8 @@ const DoctorDashboard = () => {
   const [success, setSuccess] = useState("");
   const [joiningAppointmentId, setJoiningAppointmentId] = useState("");
   const [patientNameById, setPatientNameById] = useState({});
+  const [paymentByAppointment, setPaymentByAppointment] = useState({});
+  const [paymentLoading, setPaymentLoading] = useState(false);
 
   const appointmentById = useMemo(
     () => Object.fromEntries(appointments.map((item) => [String(item._id), item])),
@@ -132,25 +145,82 @@ const DoctorDashboard = () => {
     setPatientNameById(Object.fromEntries(entries));
   };
 
+  const loadPaymentsForAppointments = async (appointmentList) => {
+    setPaymentLoading(true);
+
+    try {
+      const entries = await Promise.all((Array.isArray(appointmentList) ? appointmentList : []).map(async (appointment) => {
+        const appointmentId = String(appointment?._id || "");
+        if (!appointmentId) {
+          return [appointmentId, null];
+        }
+
+        try {
+          const payments = await getPaymentsByAppointment(appointmentId);
+          const latest = Array.isArray(payments) && payments.length > 0 ? payments[0] : null;
+          return [appointmentId, latest];
+        } catch {
+          return [appointmentId, null];
+        }
+      }));
+
+      setPaymentByAppointment(Object.fromEntries(entries));
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
   const loadData = async () => {
     setLoading(true);
     setError("");
 
     try {
-      const [profileData, appointmentData] = await Promise.all([
-        getDoctorProfile().catch(() => null),
-        getDoctorAppointments().catch(() => [])
-      ]);
+      let profileData = null;
+
+      try {
+        profileData = await getDoctorProfile();
+        setProfileMissing(false);
+      } catch (profileError) {
+        if (profileError?.response?.status === 404) {
+          setProfileMissing(true);
+          setProfile(null);
+          setAppointments([]);
+          setPatientNameById({});
+          setProfileForm((prev) => ({
+            ...prev,
+            fullName: user?.fullName || prev.fullName || "",
+            specialization: user?.specialty || prev.specialization || ""
+          }));
+          setAvailabilitySlots([defaultSlot]);
+          setUnavailablePeriods([defaultUnavailablePeriod]);
+          return;
+        }
+
+        throw profileError;
+      }
+
+      let appointmentData = [];
+      try {
+        appointmentData = await getDoctorAppointments();
+      } catch (appointmentError) {
+        if (appointmentError?.response?.status === 404) {
+          appointmentData = [];
+        } else {
+          throw appointmentError;
+        }
+      }
 
       const normalizedAppointments = Array.isArray(appointmentData) ? appointmentData : [];
 
       setProfile(profileData);
       setAppointments(normalizedAppointments);
       await loadPatientNames(normalizedAppointments);
+      await loadPaymentsForAppointments(normalizedAppointments);
 
       setProfileForm({
         fullName: profileData?.fullName || "",
         specialization: profileData?.specialization || "",
+        licenseNumber: profileData?.licenseNumber || "",
         qualification: profileData?.qualification || "",
         experienceYears: Number(profileData?.experienceYears || 0),
         consultationFee: Number(profileData?.consultationFee || 0),
@@ -187,6 +257,15 @@ const DoctorDashboard = () => {
 
   const pendingAppointments = appointments.filter((item) => item.status === "pending");
   const consultationAppointments = appointments.filter((item) => ["confirmed", "completed"].includes(String(item.status || "").toLowerCase()));
+  const doctorPayments = useMemo(() => {
+    return consultationsWithPayment(consultationAppointments, paymentByAppointment);
+  }, [consultationAppointments, paymentByAppointment]);
+
+  const totalReceived = useMemo(() => {
+    return doctorPayments
+      .filter((item) => String(item.payment?.status || "").toLowerCase() === "succeeded")
+      .reduce((sum, item) => sum + Number(item.payment?.amount || 0), 0);
+  }, [doctorPayments]);
 
   const handleSaveProfile = async (event) => {
     event.preventDefault();
@@ -195,6 +274,29 @@ const DoctorDashboard = () => {
     setSuccess("");
 
     try {
+      if (profileMissing) {
+        await registerDoctor({
+          userId: user?.id,
+          fullName: profileForm.fullName,
+          specialization: profileForm.specialization,
+          licenseNumber: profileForm.licenseNumber,
+          qualification: profileForm.qualification,
+          experienceYears: Number(profileForm.experienceYears || 0),
+          consultationFee: Number(profileForm.consultationFee || 0),
+          bio: profileForm.bio,
+          workingHours: {
+            start: profileForm.workingHoursStart,
+            end: profileForm.workingHoursEnd,
+            timezone: profileForm.workingHoursTimezone
+          }
+        });
+
+        setSuccess("Doctor profile created.");
+        setProfileMissing(false);
+        await loadData();
+        return;
+      }
+
       await updateDoctorProfile({
         fullName: profileForm.fullName,
         specialization: profileForm.specialization,
@@ -418,11 +520,17 @@ const DoctorDashboard = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="rounded-2xl bg-gradient-to-r from-cyan-700 to-teal-700 text-white p-6 shadow-lg">
+      <div className="rounded-2xl bg-linear-to-r from-cyan-700 to-teal-700 text-white p-6 shadow-lg">
         <h1 className="text-2xl md:text-3xl font-bold">Doctor Workspace</h1>
         <p className="opacity-90 mt-1">Handle appointment requests, availability, and prescriptions.</p>
         {profile ? <p className="mt-2 text-sm opacity-95">Signed in as {profile.fullName} ({profile.specialization})</p> : null}
       </div>
+
+      {profileMissing ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 text-sm">
+          Doctor profile is missing for this account. Open the Profile tab and create it to enable appointments and consultations.
+        </div>
+      ) : null}
 
       <div className="border-b border-slate-200">
         <nav className="-mb-px flex gap-5 text-sm font-medium">
@@ -430,6 +538,7 @@ const DoctorDashboard = () => {
           <button onClick={() => setActiveTab("consultations")} className={`py-3 border-b-2 ${activeTab === "consultations" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Consultations</button>
           <button onClick={() => setActiveTab("profile")} className={`py-3 border-b-2 ${activeTab === "profile" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Profile</button>
           <button onClick={() => setActiveTab("prescription")} className={`py-3 border-b-2 ${activeTab === "prescription" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Prescriptions</button>
+          <button onClick={() => setActiveTab("payments")} className={`py-3 border-b-2 ${activeTab === "payments" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Payments</button>
           <button onClick={() => setActiveTab("availability")} className={`py-3 border-b-2 ${activeTab === "availability" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Availability</button>
         </nav>
       </div>
@@ -525,6 +634,10 @@ const DoctorDashboard = () => {
             <input required value={profileForm.specialization} onChange={(e) => setProfileForm((prev) => ({ ...prev, specialization: e.target.value }))} className="w-full border border-slate-300 rounded-md px-3 py-2" />
           </div>
           <div>
+            <label className="text-sm text-slate-700">License number</label>
+            <input required value={profileForm.licenseNumber} onChange={(e) => setProfileForm((prev) => ({ ...prev, licenseNumber: e.target.value }))} disabled={!profileMissing} className="w-full border border-slate-300 rounded-md px-3 py-2 disabled:bg-slate-100 disabled:text-slate-500" />
+          </div>
+          <div>
             <label className="text-sm text-slate-700">Qualification</label>
             <input value={profileForm.qualification} onChange={(e) => setProfileForm((prev) => ({ ...prev, qualification: e.target.value }))} className="w-full border border-slate-300 rounded-md px-3 py-2" />
           </div>
@@ -556,7 +669,7 @@ const DoctorDashboard = () => {
             <label className="text-sm text-slate-700">Professional bio</label>
             <textarea value={profileForm.bio} onChange={(e) => setProfileForm((prev) => ({ ...prev, bio: e.target.value }))} rows={4} className="w-full border border-slate-300 rounded-md px-3 py-2" />
           </div>
-          <button disabled={savingProfile} className="bg-teal-700 hover:bg-teal-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2">{savingProfile ? "Saving..." : "Save Profile"}</button>
+          <button disabled={savingProfile} className="bg-teal-700 hover:bg-teal-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2">{savingProfile ? "Saving..." : profileMissing ? "Create Profile" : "Save Profile"}</button>
         </form>
       ) : null}
 
@@ -622,6 +735,47 @@ const DoctorDashboard = () => {
           </div>
           <button disabled={issuing} className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">{issuing ? "Issuing..." : "Issue"}</button>
         </form>
+      ) : null}
+
+      {activeTab === "payments" ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+            <p className="text-xs uppercase tracking-wide">Total Received</p>
+            <p className="text-2xl font-semibold">LKR {Number(totalReceived || 0).toFixed(2)}</p>
+            <p className="text-xs mt-1">Based on succeeded payments linked to your appointments.</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <table className="min-w-full">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500 text-left">
+                <tr>
+                  <th className="px-4 py-3">Patient</th>
+                  <th className="px-4 py-3">Appointment</th>
+                  <th className="px-4 py-3">Method</th>
+                  <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Paid At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentLoading ? (
+                  <tr><td colSpan={6} className="px-4 py-6 text-slate-500">Loading payments...</td></tr>
+                ) : doctorPayments.length === 0 ? (
+                  <tr><td colSpan={6} className="px-4 py-6 text-slate-500">No payment records found for your appointments.</td></tr>
+                ) : doctorPayments.map((item) => (
+                  <tr key={item.appointment._id} className="border-t border-slate-100 text-sm">
+                    <td className="px-4 py-3">{resolvePatientName(item.appointment.patientId)}</td>
+                    <td className="px-4 py-3">{new Date(item.appointment.scheduledAt).toLocaleString()}</td>
+                    <td className="px-4 py-3">{item.payment?.paymentMethod || "-"}</td>
+                    <td className="px-4 py-3">{item.payment ? `${item.payment.currency} ${Number(item.payment.amount || 0).toFixed(2)}` : "-"}</td>
+                    <td className="px-4 py-3"><span className="px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">{item.payment?.status || "not-paid"}</span></td>
+                    <td className="px-4 py-3">{item.payment?.paidAt ? new Date(item.payment.paidAt).toLocaleString() : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : null}
 
       {activeTab === "availability" ? (

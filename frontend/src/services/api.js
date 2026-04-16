@@ -40,6 +40,7 @@ export const doctorApi = createClient("/api/doctors");
 export const patientApi = createClient("/api/patients");
 export const telemedicineApi = createClient("/api/telemedicine");
 export const aiApi = createClient("/api/ai");
+export const paymentApi = createClient("/api/payments");
 
 export const extractData = (response) => response?.data?.data ?? response?.data ?? null;
 

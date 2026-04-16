@@ -80,11 +80,26 @@ const validateToken = async (req, res) => {
   });
 };
 
+const listUsers = async (req, res, next) => {
+  try {
+    const users = await authService.listUsers({ role: req.query.role });
+
+    return res.status(200).json({
+      success: true,
+      message: "Users fetched successfully",
+      data: users
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   register,
   login,
   refresh,
   logout,
   me,
-  validateToken
+  validateToken,
+  listUsers
 };

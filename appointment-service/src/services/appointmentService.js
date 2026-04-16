@@ -59,6 +59,45 @@ const parseDate = (value, fieldName) => {
   return date;
 };
 
+const extractData = (response) => response?.data?.data ?? null;
+
+const assertPatientAccountCanBook = async ({ patientId, headers, user }) => {
+  if (user.role !== "patient") {
+    return;
+  }
+
+  try {
+    const profileResponse = await httpClient.get(`${env.patientServiceUrl}/api/patients/profile`, {
+      headers
+    });
+
+    const profile = extractData(profileResponse) || {};
+    const status = String(profile.status || "active").toLowerCase();
+
+    if (["inactive", "suspended"].includes(status)) {
+      throw new ServiceError(403, `Booking is not allowed because your account is ${status}. Please contact support.`);
+    }
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      throw error;
+    }
+
+    const statusCode = Number(error?.response?.status || 0);
+    if (statusCode === 401 || statusCode === 403) {
+      throw new ServiceError(403, "Booking is not allowed for this account.");
+    }
+
+    if (statusCode === 404) {
+      throw new ServiceError(404, "Patient profile not found. Complete profile setup before booking.");
+    }
+
+    throw new ServiceError(502, "Could not verify patient account status before booking", {
+      reason: error?.message || "unknown error",
+      patientId
+    });
+  }
+};
+
 const hasOverlap = (leftStart, leftEnd, rightStart, rightEnd) => leftStart < rightEnd && leftEnd > rightStart;
 
 // CORE: Check for existing appointment conflicts
@@ -250,6 +289,7 @@ const createAppointment = async ({ body, user, headers }) => {
   const durationMinutes = body.durationMinutes || 30;
 
   if (!patientId) throw new ServiceError(400, "patientId is required");
+  await assertPatientAccountCanBook({ patientId, headers, user });
   assertFutureDate(body.scheduledAt, "scheduledAt");
 
   // 1. Conflict & Local Availability Check

@@ -109,6 +109,13 @@ router.patch(
   patientController.updatePatientStatus
 );
 
+router.get(
+  "/admin-list",
+  protect,
+  authorize("admin"),
+  patientController.listPatientsForAdmin
+);
+
 router.delete(
   "/reports/:reportId",
   protect,

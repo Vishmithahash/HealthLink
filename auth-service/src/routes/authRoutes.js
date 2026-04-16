@@ -112,6 +112,7 @@ router.post("/refresh", refreshValidation, authController.refresh);
 router.post("/logout", authMiddleware, authController.logout);
 router.get("/me", authMiddleware, authController.me);
 router.get("/validate-token", authMiddleware, authController.validateToken);
+router.get("/users", authMiddleware, roleMiddleware("Admin"), authController.listUsers);
 
 router.get("/patient-only", authMiddleware, roleMiddleware("patient"), (req, res) => {
   return res.status(200).json({

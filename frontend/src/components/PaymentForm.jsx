@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 
-const PaymentForm = ({ amount, onPaymentSuccess, onCancel }) => {
+const PaymentForm = ({ amount, currency = 'LKR', clientSecret, onPaymentSuccess, onCancel }) => {
     const stripe = useStripe();
     const elements = useElements();
     const [error, setError] = useState(null);
@@ -14,31 +14,48 @@ const PaymentForm = ({ amount, onPaymentSuccess, onCancel }) => {
             return;
         }
 
+        if (!clientSecret) {
+            setError('Missing payment session. Please retry.');
+            return;
+        }
+
         setProcessing(true);
         setError(null);
 
-        // Get card Element reference
         const cardElement = elements.getElement(CardElement);
 
-        // In a real application, you would create a PaymentMethod here and pass it to your backend
-        /*
-        const {error, paymentMethod} = await stripe.createPaymentMethod({
-          type: 'card',
-          card: cardElement,
-        });
-        
-        if (error) {
-           setError(error.message);
-           setProcessing(false);
-           return;
-        }
-        */
-
-        // Mocking an API call delay for the demonstration
-        setTimeout(() => {
+        if (!cardElement) {
+            setError('Card input is not ready. Please retry.');
             setProcessing(false);
-            onPaymentSuccess();
-        }, 1500);
+            return;
+        }
+
+        const result = await stripe.confirmCardPayment(clientSecret, {
+            payment_method: {
+                card: cardElement
+            }
+        });
+
+        if (result.error) {
+            setError(result.error.message || 'Payment failed. Please try again.');
+            setProcessing(false);
+            return;
+        }
+
+        const intent = result.paymentIntent;
+        if (!intent) {
+            setError('Payment did not return a valid intent.');
+            setProcessing(false);
+            return;
+        }
+
+        try {
+            await onPaymentSuccess(intent);
+        } catch (callbackError) {
+            setError(callbackError?.message || 'Payment verification failed.');
+        } finally {
+            setProcessing(false);
+        }
     };
 
     return (
@@ -59,10 +76,10 @@ const PaymentForm = ({ amount, onPaymentSuccess, onCancel }) => {
 
             <button
                 type="submit"
-                disabled={!stripe || processing}
+                disabled={!stripe || processing || !clientSecret}
                 className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-white bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 disabled:bg-slate-400 transition-colors"
             >
-                {processing ? 'Processing...' : `Pay $${amount}`}
+                {processing ? 'Processing...' : `Pay ${currency} ${Number(amount || 0).toFixed(2)}`}
             </button>
             <button
                 type="button"

@@ -9,6 +9,8 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
+    port: 5173,
+    strictPort: true,
     proxy: {
       "/api/auth": {
         target: "http://localhost:4000",
@@ -32,6 +34,10 @@ export default defineConfig({
       },
       "/api/ai": {
         target: "http://localhost:4005",
+        changeOrigin: true
+      },
+      "/api/payments": {
+        target: "http://localhost:4006",
         changeOrigin: true
       },
       "/uploads": {

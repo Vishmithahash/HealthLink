@@ -1,19 +1,45 @@
-import { extractData } from "./api";
-import axios from "axios";
+import { extractData, paymentApi } from "./api";
 
-const paymentApi = axios.create({
-	baseURL: "/api/payments",
-	headers: {
-		"Content-Type": "application/json"
-	}
-});
-
-export const processPayment = async (payload) => {
-	const response = await paymentApi.post("/", payload);
+export const createStripeIntent = async (payload) => {
+	const response = await paymentApi.post("/create-intent", payload);
 	return extractData(response);
 };
 
-export const getPaymentHistory = async () => {
-	const response = await paymentApi.get("/my");
+export const verifyStripePayment = async (payload) => {
+	const response = await paymentApi.post("/verify", payload);
+	return extractData(response);
+};
+
+export const uploadBankSlip = async (formData) => {
+	const response = await paymentApi.post("/upload-slip", formData, {
+		headers: {
+			"Content-Type": "multipart/form-data"
+		}
+	});
+	return extractData(response);
+};
+
+export const verifyBankSlip = async (payload) => {
+	const response = await paymentApi.post("/verify-slip", payload);
+	return extractData(response);
+};
+
+export const getPaymentsByAppointment = async (appointmentId) => {
+	const response = await paymentApi.get(`/appointment/${appointmentId}`);
+	return extractData(response);
+};
+
+export const getPaymentStatus = async (paymentId) => {
+	const response = await paymentApi.get(`/status/${paymentId}`);
+	return extractData(response);
+};
+
+export const getPaymentById = async (paymentId) => {
+	const response = await paymentApi.get(`/${paymentId}`);
+	return extractData(response);
+};
+
+export const getAdminTransactions = async (params = {}) => {
+	const response = await paymentApi.get("/admin/transactions", { params });
 	return extractData(response);
 };

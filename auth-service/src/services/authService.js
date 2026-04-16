@@ -183,10 +183,32 @@ const getMe = async ({ userId }) => {
   return user.toSafeObject();
 };
 
+const listUsers = async ({ role }) => {
+  const filter = {};
+
+  if (role) {
+    const normalized = String(role).trim().toLowerCase();
+    if (normalized === "doctor") {
+      filter.role = "Doctor";
+    } else if (normalized === "admin") {
+      filter.role = "Admin";
+    } else if (normalized === "patient") {
+      filter.role = "patient";
+    }
+  }
+
+  const users = await User.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(500);
+
+  return users.map((user) => user.toSafeObject());
+};
+
 module.exports = {
   register,
   login,
   refresh,
   logout,
-  getMe
+  getMe,
+  listUsers
 };

@@ -271,6 +271,18 @@ const updatePatientStatus = async ({ id, status, user }) => {
   return sanitizePatient(patient);
 };
 
+const listPatientsForAdmin = async ({ user }) => {
+  if (normalizeRole(user.role) !== "admin") {
+    throw new ServiceError(403, "Only admin can list patient records");
+  }
+
+  const patients = await Patient.find({})
+    .sort({ updatedAt: -1 })
+    .limit(500);
+
+  return patients.map((patient) => sanitizePatient(patient));
+};
+
 const removeReport = async ({ reportId, user }) => {
   const report = await Report.findById(reportId);
   if (!report) {
@@ -306,5 +318,6 @@ module.exports = {
   getPatientPrescriptionsById,
   addPrescriptionForPatient,
   updatePatientStatus,
+  listPatientsForAdmin,
   removeReport
 };
