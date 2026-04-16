@@ -148,6 +148,6 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/payment-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
-      STRIPE_SECRET_KEY: "stripekeysecret"
-      STRIPE_WEBHOOK_SECRET: "webhooksecret"
+      STRIPE_SECRET_KEY: "stripkey"
+      STRIPE_WEBHOOK_SECRET: "whsec_test_webhook_secret"
 

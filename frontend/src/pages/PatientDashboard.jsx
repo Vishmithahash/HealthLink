@@ -343,8 +343,70 @@ const PatientDashboard = () => {
     }
   };
 
+  const formatRemainingTime = (milliseconds) => {
+    const totalMinutes = Math.max(1, Math.ceil(milliseconds / 60000));
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+
+    const parts = [];
+    if (days > 0) {
+      parts.push(`${days} day${days > 1 ? "s" : ""}`);
+    }
+    if (hours > 0) {
+      parts.push(`${hours} hour${hours > 1 ? "s" : ""}`);
+    }
+    if (minutes > 0 || parts.length === 0) {
+      parts.push(`${minutes} minute${minutes > 1 ? "s" : ""}`);
+    }
+
+    return parts.join(" ");
+  };
+
+  const getConsultationJoinAvailability = (appointment) => {
+    const status = String(appointment?.status || "").toLowerCase();
+    if (!["confirmed", "completed"].includes(status)) {
+      return {
+        canJoin: false,
+        message: "Consultation can be joined only for confirmed or completed appointments."
+      };
+    }
+
+    const scheduledAt = new Date(appointment?.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      return {
+        canJoin: false,
+        message: "This appointment has an invalid schedule time. Please contact support."
+      };
+    }
+
+    const durationMinutes = Math.max(1, Number(appointment?.durationMinutes || 30));
+    const windowEnd = new Date(scheduledAt.getTime() + durationMinutes * 60000);
+    const now = new Date();
+
+    if (now < scheduledAt) {
+      const remaining = formatRemainingTime(scheduledAt.getTime() - now.getTime());
+      return {
+        canJoin: false,
+        message: `Consultation has not started yet. Starts in ${remaining} (${scheduledAt.toLocaleString()}).`
+      };
+    }
+
+    if (now > windowEnd) {
+      return {
+        canJoin: false,
+        message: `Consultation window ended at ${windowEnd.toLocaleString()}.`
+      };
+    }
+
+    return {
+      canJoin: true,
+      message: ""
+    };
+  };
+
   const canJoinConsultation = (appointment) => {
-    return ["confirmed", "completed"].includes(String(appointment?.status || "").toLowerCase());
+    return getConsultationJoinAvailability(appointment).canJoin;
   };
 
   const handleJoinConsultation = async (appointment) => {
@@ -352,8 +414,11 @@ const PatientDashboard = () => {
       return;
     }
 
-    if (!canJoinConsultation(appointment)) {
-      setError("Consultation can be joined only for confirmed or completed appointments.");
+    const joinAvailability = getConsultationJoinAvailability(appointment);
+    if (!joinAvailability.canJoin) {
+      const message = joinAvailability.message || "Consultation cannot be joined at this time.";
+      setError(message);
+      setToast({ type: "error", message });
       return;
     }
 
@@ -855,8 +920,8 @@ const PatientDashboard = () => {
                         ) : null}
                         <button
                           onClick={() => handleJoinConsultation(appointment)}
-                          disabled={!canJoinConsultation(appointment) || joiningAppointmentId === appointment._id}
-                          className="px-2.5 py-1 rounded-md border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-50"
+                          disabled={joiningAppointmentId === appointment._id}
+                          className={`px-2.5 py-1 rounded-md border ${canJoinConsultation(appointment) ? "border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100"} disabled:opacity-50`}
                         >
                           {joiningAppointmentId === appointment._id ? "Joining..." : "Join"}
                         </button>
