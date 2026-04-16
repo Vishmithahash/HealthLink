@@ -31,6 +31,7 @@ items:
       CORS_ORIGIN: "http://localhost:3000"
       REQUEST_TIMEOUT_MS: "5000"
       DOCTOR_SERVICE_URL: "http://doctor-service"
+      PATIENT_SERVICE_URL: "http://patient-service"
       TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
       PAYMENT_SERVICE_URL: "http://payment-service:4006"
       NOTIFICATION_SERVICE_URL: "http://notification-service:3005"
@@ -126,7 +127,7 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/ai-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
-      COHERE_API_KEY: "REPLACE_WITH_COHERE_API_KEY"
+      COHERE_API_KEY: "cohereapikey"
   - apiVersion: v1
     kind: ConfigMap
     metadata:
@@ -147,6 +148,6 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/payment-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
-      STRIPE_SECRET_KEY: "STRIPE_SECRET_KEY"
-      STRIPE_WEBHOOK_SECRET: "STRIPE_WEBHOOK_SECRET"
+      STRIPE_SECRET_KEY: "stripekeysecret"
+      STRIPE_WEBHOOK_SECRET: "webhooksecret"
 

@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FileText, Upload, User, Bot, Stethoscope, CircleX, LoaderCircle, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Elements } from "@stripe/react-stripe-js";
-import { loadStripe } from "@stripe/stripe-js";
 import { getUserInfo } from "../utils/auth";
 import {
   deletePatientReport,
@@ -38,11 +36,6 @@ const parseCsv = (value) =>
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-
-const stripePublishableKey =
-  import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ||
-  "pk_test_51TMXodRBX3qRpzeCJDDmdjrkbsHOKOZU8jVwVIMNUR9P3zrX9XQ0m9D3ZB37houeTAaBeeRh7koiWmZjUC4DCNQh00N1ffLx9P";
-const stripePromise = stripePublishableKey ? loadStripe(stripePublishableKey) : null;
 
 const PatientDashboard = () => {
   const user = getUserInfo();
@@ -553,6 +546,43 @@ const PatientDashboard = () => {
   };
 
   const handleCardPaymentSuccess = async (paymentIntent) => {
+    if (paymentIntent?.demo) {
+      setPaymentBusy(true);
+      setPaymentError("");
+
+      try {
+        await verifyStripePayment({
+          paymentId: paymentRecordId || undefined,
+          demoSuccess: true
+        });
+
+        setSuccess("Payment completed successfully.");
+        setToast({ type: "success", message: "Payment completed successfully." });
+        closePaymentModal();
+        await loadDashboard();
+      } catch (err) {
+        const message = extractErrorMessage(err, "Payment verification failed");
+        const normalized = String(message || "").toLowerCase();
+
+        if (normalized.includes("return_url") || normalized.includes("allow_redirects")) {
+          setPaymentClientSecret("");
+          setPaymentRecordId("");
+          setPaymentError("Previous payment session is incompatible. Click Initialize Card Payment to create a new session and retry.");
+          setToast({
+            type: "error",
+            message: "Payment session expired. Please initialize card payment again."
+          });
+        } else {
+          setPaymentError(message);
+          setToast({ type: "error", message });
+        }
+      } finally {
+        setPaymentBusy(false);
+      }
+
+      return;
+    }
+
     setPaymentBusy(true);
     setPaymentError("");
 
@@ -696,7 +726,7 @@ const PatientDashboard = () => {
             {!paymentClientSecret ? (
               <button
                 type="button"
-                disabled={paymentBusy || !stripePromise}
+                disabled={paymentBusy}
                 onClick={startCardPayment}
                 className="bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
               >
@@ -705,19 +735,13 @@ const PatientDashboard = () => {
             ) : null}
 
             {paymentClientSecret ? (
-              stripePromise ? (
-                <Elements stripe={stripePromise} options={{ clientSecret: paymentClientSecret }}>
-                  <PaymentForm
-                    amount={paymentAmount}
-                    currency={paymentCurrency}
-                    clientSecret={paymentClientSecret}
-                    onPaymentSuccess={handleCardPaymentSuccess}
-                    onCancel={closePaymentModal}
-                  />
-                </Elements>
-              ) : (
-                <p className="text-sm text-rose-600">Stripe key is missing. Add VITE_STRIPE_PUBLISHABLE_KEY to frontend environment.</p>
-              )
+              <PaymentForm
+                amount={paymentAmount}
+                currency={paymentCurrency}
+                clientSecret={paymentClientSecret}
+                onPaymentSuccess={handleCardPaymentSuccess}
+                onCancel={closePaymentModal}
+              />
             ) : null}
           </div>
         ) : (
