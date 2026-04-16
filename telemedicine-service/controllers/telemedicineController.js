@@ -93,6 +93,48 @@ const verifyAppointmentIfRequired = async ({ req, appointmentId, doctorId, patie
   }
 };
 
+const sendConsultationCompletedNotification = async ({ req, session }) => {
+  const patientEmail = req.body?.patientEmail || req.query?.patientEmail;
+  const doctorEmail = req.body?.doctorEmail || req.query?.doctorEmail;
+  const patientPhone = req.body?.patientPhone || req.query?.patientPhone;
+  const doctorPhone = req.body?.doctorPhone || req.query?.doctorPhone;
+
+  if (!patientEmail && !doctorEmail && !patientPhone && !doctorPhone) {
+    return;
+  }
+
+  const notificationServiceUrl = process.env.NOTIFICATION_SERVICE_URL || "http://localhost:4007";
+  const timeout = Number(process.env.REQUEST_TIMEOUT_MS || 5000);
+
+  try {
+    await axios.post(
+      `${notificationServiceUrl}/api/notifications/consultation-completed`,
+      {
+        to: req.body?.to,
+        toPhone: req.body?.toPhone || req.query?.toPhone,
+        patientEmail,
+        patientPhone,
+        doctorEmail,
+        doctorPhone,
+        patientName: req.body?.patientName,
+        doctorName: req.body?.doctorName,
+        appointmentId: session.appointmentId,
+        consultationDate: (session.endedAt || new Date()).toISOString(),
+        message: req.body?.message || "Your consultation session has been completed."
+      },
+      {
+        headers: {
+          Authorization: getAuthHeader(req)
+        },
+        timeout
+      }
+    );
+  } catch (error) {
+    const reason = error.response?.data?.message || error.message;
+    console.error(`Telemedicine notification failed: ${reason}`);
+  }
+};
+
 const createSession = async (req, res) => {
   try {
     const { appointmentId, patientId, doctorId } = req.body;
@@ -259,6 +301,8 @@ const endSession = async (req, res) => {
     }
 
     await session.save();
+
+      await sendConsultationCompletedNotification({ req, session }); // Dispatch notification when session ends
 
     return send(res, 200, "Session ended successfully", session);
   } catch (error) {

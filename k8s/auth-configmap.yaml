@@ -9,5 +9,6 @@ data:
   CORS_ORIGIN: "http://localhost:3000"
   DOCTOR_SERVICE_URL: "http://doctor-service"
   PATIENT_SERVICE_URL: "http://patient-service"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
   INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
   REQUEST_TIMEOUT_MS: "5000"

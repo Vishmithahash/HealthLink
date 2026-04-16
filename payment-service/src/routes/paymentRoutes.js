@@ -91,6 +91,25 @@ router.post(
 );
 
 router.post(
+  "/verify-otp",
+  allowRoles("patient", "admin"),
+  [
+    body("paymentId")
+      .notEmpty()
+      .withMessage("paymentId is required")
+      .isMongoId()
+      .withMessage("paymentId must be a valid Mongo ID"),
+    body("otp")
+      .notEmpty()
+      .withMessage("otp is required")
+      .matches(/^\d{6}$/)
+      .withMessage("otp must be a 6-digit code"),
+    validate
+  ],
+  paymentController.verifyStripeOtp
+);
+
+router.post(
   "/upload-slip",
   allowRoles("patient"),
   uploadSlipMiddleware,

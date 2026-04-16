@@ -27,5 +27,8 @@ module.exports = {
   accessTokenExpiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN,
   refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN,
   bcryptSaltRounds: Number(process.env.BCRYPT_SALT_ROUNDS),
-  corsOrigin: process.env.CORS_ORIGIN || "*"
+  corsOrigin: process.env.CORS_ORIGIN || "*",
+  internalServiceApiKey: process.env.INTERNAL_SERVICE_API_KEY || "",
+  notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || "http://localhost:4007",
+  requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 5000)
 };

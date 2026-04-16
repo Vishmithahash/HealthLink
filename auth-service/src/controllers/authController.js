@@ -94,6 +94,20 @@ const listUsers = async (req, res, next) => {
   }
 };
 
+const getInternalUserById = async (req, res, next) => {
+  try {
+    const user = await authService.getInternalUserById({ userId: req.params.id });
+
+    return res.status(200).json({
+      success: true,
+      message: "Internal user lookup successful",
+      data: user
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -101,5 +115,6 @@ module.exports = {
   logout,
   me,
   validateToken,
-  listUsers
+  listUsers,
+  getInternalUserById
 };

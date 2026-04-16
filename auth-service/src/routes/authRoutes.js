@@ -3,6 +3,7 @@ const { body } = require("express-validator");
 
 const authController = require("../controllers/authController");
 const authMiddleware = require("../middleware/authMiddleware");
+const internalServiceAuth = require("../middleware/internalServiceAuth");
 const roleMiddleware = require("../middleware/roleMiddleware");
 const validateRequest = require("../middleware/validateRequest");
 const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doctorSpecialties");
@@ -113,6 +114,7 @@ router.post("/logout", authMiddleware, authController.logout);
 router.get("/me", authMiddleware, authController.me);
 router.get("/validate-token", authMiddleware, authController.validateToken);
 router.get("/users", authMiddleware, roleMiddleware("Admin"), authController.listUsers);
+router.get("/internal/users/:id", internalServiceAuth, authController.getInternalUserById);
 
 router.get("/patient-only", authMiddleware, roleMiddleware("patient"), (req, res) => {
   return res.status(200).json({

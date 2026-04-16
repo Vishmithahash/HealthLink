@@ -32,6 +32,7 @@ services:
       PORT: 4000
       DOCTOR_SERVICE_URL: http://doctor-service:4002
       PATIENT_SERVICE_URL: http://patient-service:4003
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
       INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       REQUEST_TIMEOUT_MS: 5000
 
@@ -54,11 +55,13 @@ services:
       NODE_ENV: development
       PORT: 4001
       ALLOW_DOCTOR_FALLBACK: "true"
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       DOCTOR_SERVICE_URL: http://doctor-service:4002
       PATIENT_SERVICE_URL: http://patient-service:4003
       TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
       PAYMENT_SERVICE_URL: http://payment-service:4006
-      NOTIFICATION_SERVICE_URL: http://host.docker.internal:3005
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
       REQUEST_TIMEOUT_MS: 5000
 
   payment-service:
@@ -82,9 +85,39 @@ services:
       NODE_ENV: development
       PORT: 4006
       APPOINTMENT_SERVICE_URL: http://appointment-service:4001
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       DOCTOR_SERVICE_URL: http://doctor-service:4002
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
       CORS_ORIGIN: http://localhost:3000
       REQUEST_TIMEOUT_MS: 5000
+      PAYMENT_OTP_EXPIRY_MINUTES: 10
+      PAYMENT_OTP_MAX_ATTEMPTS: 5
+
+  notification-service:
+    build:
+      context: ./notification-service
+    image: healthlink-notification-service:local
+    container_name: healthlink-notification-service
+    restart: unless-stopped
+    depends_on:
+      appointment-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      telemedicine-service:
+        condition: service_started
+    ports:
+      - "4007:4007"
+    env_file:
+      - ./notification-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4007
+      HOST: 0.0.0.0
+      CORS_ORIGIN: http://localhost:3000
+      AUTH_REQUIRED: "false"
+      ALLOWED_SERVICE_CALLERS: appointment-service,doctor-service,payment-service,telemedicine-service
 
   telemedicine-service:
     build:
@@ -110,6 +143,7 @@ services:
       ALLOW_APPOINTMENT_FALLBACK: "false"
       JITSI_DOMAIN: meet.jit.si
       CORS_ORIGIN: http://localhost:3000
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
       REQUEST_TIMEOUT_MS: 5000
 
   ai-service:
@@ -163,7 +197,7 @@ services:
       PATIENT_SERVICE_URL: http://patient-service:4003
       TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
       AI_SERVICE_URL: http://ai-service:4005
-      NOTIFICATION_SERVICE_URL: http://host.docker.internal:4005
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
       REQUEST_TIMEOUT_MS: 5000
 
   patient-service:

@@ -23,7 +23,17 @@ module.exports = {
   uploadPath: process.env.UPLOAD_PATH || "uploads",
   corsOrigin: process.env.CORS_ORIGIN || "*",
   appointmentServiceUrl: process.env.APPOINTMENT_SERVICE_URL || "http://localhost:4001",
+  authServiceUrl: process.env.AUTH_SERVICE_URL || "http://localhost:4000",
+  internalServiceApiKey: process.env.INTERNAL_SERVICE_API_KEY || "",
   doctorServiceUrl: process.env.DOCTOR_SERVICE_URL || "http://localhost:4002",
+  notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || "http://localhost:4007",
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 5000),
-  defaultConsultationFee: Number(process.env.DEFAULT_CONSULTATION_FEE || 0)
+  defaultConsultationFee: Number(process.env.DEFAULT_CONSULTATION_FEE || 0),
+  paymentOtpExpiryMinutes: Number(process.env.PAYMENT_OTP_EXPIRY_MINUTES || 10),
+  paymentOtpMaxAttempts: Number(process.env.PAYMENT_OTP_MAX_ATTEMPTS || 5),
+  paymentOtpSecret:
+    process.env.PAYMENT_OTP_SECRET ||
+    process.env.JWT_SECRET ||
+    process.env.JWT_ACCESS_SECRET ||
+    "healthlink-payment-otp-secret"
 };

@@ -33,6 +33,8 @@ const confirmPaymentIntentForDemo = async (id) => {
 
     throw error;
   }
+const retrievePaymentMethod = async (id) => {
+  return stripe.paymentMethods.retrieve(id);
 };
 
 const constructWebhookEvent = (rawBody, signature) => {
@@ -76,6 +78,7 @@ module.exports = {
   createPaymentIntent,
   retrievePaymentIntent,
   confirmPaymentIntentForDemo,
+  retrievePaymentMethod,
   constructWebhookEvent,
   mapStripeIntentStatus
 };

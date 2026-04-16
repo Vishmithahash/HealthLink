@@ -185,8 +185,53 @@ const checkExternalDoctorAvailability = async ({ doctorId, scheduledAt, duration
   }
 };
 
+const fetchUserContactFromAuth = async (userId) => {
+  if (!userId || !env.authServiceUrl || !env.internalServiceApiKey) {
+    return null;
+  }
+
+  try {
+    const response = await httpClient.get(
+      `${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}`,
+      {
+        headers: {
+          "x-internal-api-key": env.internalServiceApiKey
+        }
+      }
+    );
+
+    return response.data?.data || null;
+  } catch (error) {
+    return null;
+  }
+};
+
+const resolveAppointmentNotificationContext = async ({ appointment, notificationContext }) => {
+  const baseContext = notificationContext && typeof notificationContext === "object" ? notificationContext : {};
+
+  const needsPatientLookup = !baseContext.patientEmail || !baseContext.patientName || !baseContext.patientPhone;
+  const needsDoctorLookup = !baseContext.doctorEmail || !baseContext.doctorName || !baseContext.doctorPhone;
+
+  const [patientContact, doctorContact] = await Promise.all([
+    needsPatientLookup ? fetchUserContactFromAuth(appointment.patientId) : Promise.resolve(null),
+    needsDoctorLookup ? fetchUserContactFromAuth(appointment.doctorId) : Promise.resolve(null)
+  ]);
+
+  return {
+    to: baseContext.to,
+    toPhone: baseContext.toPhone,
+    patientEmail: baseContext.patientEmail || patientContact?.email || null,
+    patientPhone: baseContext.patientPhone || patientContact?.phoneNumber || null,
+    doctorEmail: baseContext.doctorEmail || doctorContact?.email || null,
+    doctorPhone: baseContext.doctorPhone || doctorContact?.phoneNumber || null,
+    patientName: baseContext.patientName || patientContact?.fullName || "Patient",
+    doctorName: baseContext.doctorName || doctorContact?.fullName || "Doctor",
+    message: baseContext.message || ""
+  };
+};
+
 // UPSTREAM: Notify Payment and Notification services
-const notifyExternalSystems = async ({ appointment, headers }) => {
+const notifyExternalSystems = async ({ appointment, headers, notificationContext = {} }) => {
   const payload = {
     appointmentId: appointment._id.toString(),
     patientId: appointment.patientId,
@@ -207,14 +252,35 @@ const notifyExternalSystems = async ({ appointment, headers }) => {
     }, { headers }).catch(e => console.error("Payment notification failed", e.message))
   );
 
-  // Send Notification
-  tasks.push(
-    httpClient.post(`${env.notificationServiceUrl}/api/notifications/send`, {
-      recipientId: payload.patientId,
-      type: "APPOINTMENT_CONFIRMATION",
-      data: payload
-    }, { headers }).catch(e => console.error("Notification failed", e.message))
-  );
+  const resolvedNotificationContext = await resolveAppointmentNotificationContext({
+    appointment,
+    notificationContext
+  });
+
+  const to = resolvedNotificationContext.to;
+  const toPhone = resolvedNotificationContext.toPhone;
+  const patientEmail = resolvedNotificationContext.patientEmail;
+  const patientPhone = resolvedNotificationContext.patientPhone;
+  const doctorEmail = resolvedNotificationContext.doctorEmail;
+  const doctorPhone = resolvedNotificationContext.doctorPhone;
+
+  if (to || toPhone || patientEmail || patientPhone || doctorEmail || doctorPhone) {
+    tasks.push(
+      httpClient.post(`${env.notificationServiceUrl}/api/notifications/appointment-confirmation`, {
+        to,
+        toPhone,
+        patientEmail,
+        patientPhone,
+        doctorEmail,
+        doctorPhone,
+        patientName: resolvedNotificationContext.patientName,
+        doctorName: resolvedNotificationContext.doctorName,
+        consultationDate: new Date(appointment.scheduledAt).toISOString(),
+        appointmentId: payload.appointmentId,
+        message: resolvedNotificationContext.message
+      }, { headers }).catch(e => console.error("Notification failed", e.message))
+    );
+  }
 
   await Promise.allSettled(tasks);
 };
@@ -324,7 +390,10 @@ const createAppointment = async ({ body, user, headers }) => {
   });
 
   // 4. Async Notifications
-  await notifyExternalSystems({ appointment, headers });
+  const notificationContext =
+    body.notification && typeof body.notification === "object" ? body.notification : body;
+
+  await notifyExternalSystems({ appointment, headers, notificationContext });
 
   return appointment;
 };

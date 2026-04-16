@@ -6,6 +6,7 @@ Handles consultation payments for HealthLink:
 
 ## Endpoints
 - POST /api/payments/create-intent
+- POST /api/payments/verify-otp
 - POST /api/payments/verify
 - POST /api/payments/webhook
 - POST /api/payments/upload-slip
@@ -21,6 +22,15 @@ Handles consultation payments for HealthLink:
 3. npm run dev
 
 Service port: 4006
+
+## Stripe Card OTP Flow
+
+1. Call POST /api/payments/create-intent
+2. Payment service sends a 6-digit OTP to the patient email (from auth-service)
+3. Verify OTP with POST /api/payments/verify-otp
+4. Confirm payment state with POST /api/payments/verify (or provide otp in /verify request)
+
+Without OTP verification, stripe_card payment verification is blocked.
 
 ## Stripe Webhook via ngrok
 Use ngrok because Stripe cannot reach localhost directly.
