@@ -6,6 +6,7 @@ const {
   toMinorUnits,
   createPaymentIntent,
   retrievePaymentIntent,
+  confirmPaymentIntentForDemo,
   retrievePaymentMethod,
   constructWebhookEvent,
   mapStripeIntentStatus
@@ -215,7 +216,8 @@ const ensureCorrectPaymentAmount = async ({ appointment, amount, authHeader }) =
   }
 };
 
-const assertNoDuplicateActivePayment = async (appointmentId) => {
+const assertNoDuplicateActivePayment = async (appointmentId, options = {}) => {
+  const { replacePendingCard = false } = options;
   const paidPayment = await Payment.findOne({ appointmentId, status: "succeeded" });
   if (paidPayment) {
     throw new ServiceError(409, "Payment already completed for this appointment");
@@ -227,6 +229,16 @@ const assertNoDuplicateActivePayment = async (appointmentId) => {
   });
 
   if (activePendingPayment) {
+    if (
+      replacePendingCard &&
+      activePendingPayment.paymentMethod === "stripe_card" &&
+      activePendingPayment.status === "pending"
+    ) {
+      applyPaymentStatus(activePendingPayment, "failed");
+      await activePendingPayment.save();
+      return;
+    }
+
     throw new ServiceError(409, "A pending payment already exists for this appointment");
   }
 };
@@ -492,7 +504,7 @@ const createIntent = withErrorHandling(async (req, res) => {
     authHeader: req.headers.authorization
   });
 
-  await assertNoDuplicateActivePayment(appointmentId);
+  await assertNoDuplicateActivePayment(appointmentId, { replacePendingCard: true });
 
   const intent = await createPaymentIntent(amount, currency, {
     appointmentId,
@@ -576,6 +588,7 @@ const verifyStripeOtp = withErrorHandling(async (req, res) => {
 const verifyStripePayment = withErrorHandling(async (req, res) => {
   const paymentId = String(req.body.paymentId || "").trim();
   const paymentIntentId = String(req.body.paymentIntentId || "").trim();
+  const demoSuccess = req.body.demoSuccess === true || String(req.body.demoSuccess || "").toLowerCase() === "true";
 
   let payment;
 
@@ -595,6 +608,41 @@ const verifyStripePayment = withErrorHandling(async (req, res) => {
     throw new ServiceError(400, "Only stripe_card payments can be verified using this endpoint");
   }
 
+  // Development-only shortcut used by the custom frontend OTP demo flow.
+  if (demoSuccess) {
+    if (String(env.nodeEnv || "").toLowerCase() === "production") {
+      throw new ServiceError(400, "demoSuccess verification is not allowed in production");
+    }
+
+    const intent = await confirmPaymentIntentForDemo(payment.stripePaymentIntentId);
+    const expectedMinorAmount = toMinorUnits(payment.amount);
+
+    if (Number(intent.amount) !== Number(expectedMinorAmount)) {
+      throw new ServiceError(400, "Stripe amount mismatch for this payment");
+    }
+
+    if (String(intent.currency || "").toUpperCase() !== payment.currency) {
+      throw new ServiceError(400, "Stripe currency mismatch for this payment");
+    }
+
+    const mappedStatus = mapStripeIntentStatus(intent.status);
+    if (mappedStatus !== "succeeded") {
+      throw new ServiceError(400, `Demo confirmation failed with Stripe status: ${intent.status}`);
+    }
+
+    applyPaymentStatus(payment, mappedStatus);
+    await payment.save();
+
+    return sendSuccess(res, 200, "Demo payment verified", {
+      paymentId: payment._id,
+      status: payment.status,
+      paidAt: payment.paidAt,
+      stripePaymentIntentId: payment.stripePaymentIntentId,
+      demo: true
+    });
+  }
+
+  const intent = await retrievePaymentIntent(payment.stripePaymentIntentId);
   await ensureOtpVerifiedForStripePayment({
     payment,
     otp: req.body.otp
@@ -873,7 +921,7 @@ const getByAppointment = withErrorHandling(async (req, res) => {
     .sort({ createdAt: -1 });
 
   if (payments.length === 0) {
-    throw new ServiceError(404, "No payments found for appointment");
+    return sendSuccess(res, 200, "No payments found for appointment", []);
   }
 
   ensurePaymentAccess(payments[0], req.user);

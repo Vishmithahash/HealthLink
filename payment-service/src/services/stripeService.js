@@ -12,6 +12,7 @@ const createPaymentIntent = async (amount, currency, metadata = {}) => {
   return stripe.paymentIntents.create({
     amount: toMinorUnits(amount),
     currency: String(currency).toLowerCase(),
+    payment_method_types: ["card"],
     metadata
   });
 };
@@ -20,6 +21,18 @@ const retrievePaymentIntent = async (id) => {
   return stripe.paymentIntents.retrieve(id);
 };
 
+const confirmPaymentIntentForDemo = async (id) => {
+  try {
+    return await stripe.paymentIntents.confirm(id, {
+      payment_method: "pm_card_visa"
+    });
+  } catch (error) {
+    if (error?.code === "payment_intent_unexpected_state") {
+      return stripe.paymentIntents.retrieve(id);
+    }
+
+    throw error;
+  }
 const retrievePaymentMethod = async (id) => {
   return stripe.paymentMethods.retrieve(id);
 };
@@ -64,6 +77,7 @@ module.exports = {
   toMinorUnits,
   createPaymentIntent,
   retrievePaymentIntent,
+  confirmPaymentIntentForDemo,
   retrievePaymentMethod,
   constructWebhookEvent,
   mapStripeIntentStatus

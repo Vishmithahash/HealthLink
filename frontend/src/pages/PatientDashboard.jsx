@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FileText, Upload, User, Bot, Stethoscope, CircleX, LoaderCircle, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Elements } from "@stripe/react-stripe-js";
-import { loadStripe } from "@stripe/stripe-js";
 import { getUserInfo } from "../utils/auth";
 import {
   deletePatientReport,
@@ -38,11 +36,6 @@ const parseCsv = (value) =>
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-
-const stripePublishableKey =
-  import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ||
-  "pk_test_51TMXodRBX3qRpzeCJDDmdjrkbsHOKOZU8jVwVIMNUR9P3zrX9XQ0m9D3ZB37houeTAaBeeRh7koiWmZjUC4DCNQh00N1ffLx9P";
-const stripePromise = stripePublishableKey ? loadStripe(stripePublishableKey) : null;
 
 const PatientDashboard = () => {
   const user = getUserInfo();
@@ -350,8 +343,70 @@ const PatientDashboard = () => {
     }
   };
 
+  const formatRemainingTime = (milliseconds) => {
+    const totalMinutes = Math.max(1, Math.ceil(milliseconds / 60000));
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+
+    const parts = [];
+    if (days > 0) {
+      parts.push(`${days} day${days > 1 ? "s" : ""}`);
+    }
+    if (hours > 0) {
+      parts.push(`${hours} hour${hours > 1 ? "s" : ""}`);
+    }
+    if (minutes > 0 || parts.length === 0) {
+      parts.push(`${minutes} minute${minutes > 1 ? "s" : ""}`);
+    }
+
+    return parts.join(" ");
+  };
+
+  const getConsultationJoinAvailability = (appointment) => {
+    const status = String(appointment?.status || "").toLowerCase();
+    if (!["confirmed", "completed"].includes(status)) {
+      return {
+        canJoin: false,
+        message: "Consultation can be joined only for confirmed or completed appointments."
+      };
+    }
+
+    const scheduledAt = new Date(appointment?.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      return {
+        canJoin: false,
+        message: "This appointment has an invalid schedule time. Please contact support."
+      };
+    }
+
+    const durationMinutes = Math.max(1, Number(appointment?.durationMinutes || 30));
+    const windowEnd = new Date(scheduledAt.getTime() + durationMinutes * 60000);
+    const now = new Date();
+
+    if (now < scheduledAt) {
+      const remaining = formatRemainingTime(scheduledAt.getTime() - now.getTime());
+      return {
+        canJoin: false,
+        message: `Consultation has not started yet. Starts in ${remaining} (${scheduledAt.toLocaleString()}).`
+      };
+    }
+
+    if (now > windowEnd) {
+      return {
+        canJoin: false,
+        message: `Consultation window ended at ${windowEnd.toLocaleString()}.`
+      };
+    }
+
+    return {
+      canJoin: true,
+      message: ""
+    };
+  };
+
   const canJoinConsultation = (appointment) => {
-    return ["confirmed", "completed"].includes(String(appointment?.status || "").toLowerCase());
+    return getConsultationJoinAvailability(appointment).canJoin;
   };
 
   const handleJoinConsultation = async (appointment) => {
@@ -359,8 +414,11 @@ const PatientDashboard = () => {
       return;
     }
 
-    if (!canJoinConsultation(appointment)) {
-      setError("Consultation can be joined only for confirmed or completed appointments.");
+    const joinAvailability = getConsultationJoinAvailability(appointment);
+    if (!joinAvailability.canJoin) {
+      const message = joinAvailability.message || "Consultation cannot be joined at this time.";
+      setError(message);
+      setToast({ type: "error", message });
       return;
     }
 
@@ -553,6 +611,43 @@ const PatientDashboard = () => {
   };
 
   const handleCardPaymentSuccess = async (paymentIntent) => {
+    if (paymentIntent?.demo) {
+      setPaymentBusy(true);
+      setPaymentError("");
+
+      try {
+        await verifyStripePayment({
+          paymentId: paymentRecordId || undefined,
+          demoSuccess: true
+        });
+
+        setSuccess("Payment completed successfully.");
+        setToast({ type: "success", message: "Payment completed successfully." });
+        closePaymentModal();
+        await loadDashboard();
+      } catch (err) {
+        const message = extractErrorMessage(err, "Payment verification failed");
+        const normalized = String(message || "").toLowerCase();
+
+        if (normalized.includes("return_url") || normalized.includes("allow_redirects")) {
+          setPaymentClientSecret("");
+          setPaymentRecordId("");
+          setPaymentError("Previous payment session is incompatible. Click Initialize Card Payment to create a new session and retry.");
+          setToast({
+            type: "error",
+            message: "Payment session expired. Please initialize card payment again."
+          });
+        } else {
+          setPaymentError(message);
+          setToast({ type: "error", message });
+        }
+      } finally {
+        setPaymentBusy(false);
+      }
+
+      return;
+    }
+
     setPaymentBusy(true);
     setPaymentError("");
 
@@ -696,7 +791,7 @@ const PatientDashboard = () => {
             {!paymentClientSecret ? (
               <button
                 type="button"
-                disabled={paymentBusy || !stripePromise}
+                disabled={paymentBusy}
                 onClick={startCardPayment}
                 className="bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
               >
@@ -705,19 +800,13 @@ const PatientDashboard = () => {
             ) : null}
 
             {paymentClientSecret ? (
-              stripePromise ? (
-                <Elements stripe={stripePromise} options={{ clientSecret: paymentClientSecret }}>
-                  <PaymentForm
-                    amount={paymentAmount}
-                    currency={paymentCurrency}
-                    clientSecret={paymentClientSecret}
-                    onPaymentSuccess={handleCardPaymentSuccess}
-                    onCancel={closePaymentModal}
-                  />
-                </Elements>
-              ) : (
-                <p className="text-sm text-rose-600">Stripe key is missing. Add VITE_STRIPE_PUBLISHABLE_KEY to frontend environment.</p>
-              )
+              <PaymentForm
+                amount={paymentAmount}
+                currency={paymentCurrency}
+                clientSecret={paymentClientSecret}
+                onPaymentSuccess={handleCardPaymentSuccess}
+                onCancel={closePaymentModal}
+              />
             ) : null}
           </div>
         ) : (
@@ -831,8 +920,8 @@ const PatientDashboard = () => {
                         ) : null}
                         <button
                           onClick={() => handleJoinConsultation(appointment)}
-                          disabled={!canJoinConsultation(appointment) || joiningAppointmentId === appointment._id}
-                          className="px-2.5 py-1 rounded-md border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-50"
+                          disabled={joiningAppointmentId === appointment._id}
+                          className={`px-2.5 py-1 rounded-md border ${canJoinConsultation(appointment) ? "border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100"} disabled:opacity-50`}
                         >
                           {joiningAppointmentId === appointment._id ? "Joining..." : "Join"}
                         </button>

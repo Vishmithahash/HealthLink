@@ -58,6 +58,7 @@ services:
       AUTH_SERVICE_URL: http://auth-service:4000
       INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       DOCTOR_SERVICE_URL: http://doctor-service:4002
+      PATIENT_SERVICE_URL: http://patient-service:4003
       TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
       PAYMENT_SERVICE_URL: http://payment-service:4006
       NOTIFICATION_SERVICE_URL: http://notification-service:4007

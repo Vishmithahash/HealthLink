@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: auth-service-config
+    data:
+      ACCESS_TOKEN_EXPIRES_IN: "15m"
+      REFRESH_TOKEN_EXPIRES_IN: "7d"
+      BCRYPT_SALT_ROUNDS: "12"
+      CORS_ORIGIN: "http://localhost:3000"
+      DOCTOR_SERVICE_URL: "http://doctor-service"
+      PATIENT_SERVICE_URL: "http://patient-service"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
+      REQUEST_TIMEOUT_MS: "5000"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: auth-service-secret
+    type: Opaque
+    stringData:
+      MONGODB_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/auth-db?appName=Cluster0"
+      JWT_ACCESS_SECRET: "access_secret_123456789_secure_key_service"
+      JWT_REFRESH_SECRET: "refresh_secret_987654321_secure_key_service"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: appointment-service-config
+    data:
+      CORS_ORIGIN: "http://localhost:3000"
+      REQUEST_TIMEOUT_MS: "5000"
+      DOCTOR_SERVICE_URL: "http://doctor-service"
+      PATIENT_SERVICE_URL: "http://patient-service"
+      TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
+      PAYMENT_SERVICE_URL: "http://payment-service:4006"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:3005"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: appointment-service-secret
+    type: Opaque
+    stringData:
+      MONGODB_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/appointment-db?appName=Cluster0"
+      JWT_ACCESS_SECRET: "access_secret_123456789_secure_key_service"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: doctor-service-config
+    data:
+      PORT: "4002"
+      CORS_ORIGIN: "http://localhost:3000"
+      AUTH_SERVICE_URL: "http://auth-service"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
+      APPOINTMENT_SERVICE_URL: "http://appointment-service"
+      PATIENT_SERVICE_URL: "http://patient-service"
+      TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
+      AI_SERVICE_URL: "http://ai-service:4005"
+      TELEMEDICINE_JOIN_BASE_URL: "https://telemedicine.healthlink.local/session"
+      NOTIFICATION_SERVICE_URL: "http://notification-service"
+      REQUEST_TIMEOUT_MS: "5000"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: doctor-service-secret
+    type: Opaque
+    stringData:
+      MONGODB_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/doctor-db?appName=Cluster0"
+      JWT_ACCESS_SECRET: "access_secret_123456789_secure_key_service"
+      JWT_SECRET: "your_super_secret_jwt_key_here"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: patient-service-config
+    data:
+      PORT: "4003"
+      CORS_ORIGIN: "http://localhost:3000"
+      MAX_REPORT_SIZE_MB: "10"
+      AUTH_SERVICE_URL: "http://auth-service"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
+      AI_SERVICE_URL: "http://ai-service:4005"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: patient-service-secret
+    type: Opaque
+    stringData:
+      MONGODB_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/patient-db?appName=Cluster0"
+      JWT_ACCESS_SECRET: "access_secret_123456789_secure_key_service"
+      JWT_SECRET: "your_super_secret_jwt_key_here"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: telemedicine-service-config
+    data:
+      PORT: "4004"
+      CORS_ORIGIN: "http://localhost:3000"
+      JITSI_DOMAIN: "meet.jit.si"
+      APPOINTMENT_SERVICE_URL: "http://appointment-service"
+      VERIFY_APPOINTMENT_WITH_SERVICE: "false"
+      ALLOW_APPOINTMENT_FALLBACK: "true"
+      REQUEST_TIMEOUT_MS: "5000"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: telemedicine-service-secret
+    type: Opaque
+    stringData:
+      MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/telemedicine-db?appName=Cluster0"
+      JWT_SECRET: "access_secret_123456789_secure_key_service"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: ai-service-config
+    data:
+      PORT: "4005"
+      CORS_ORIGIN: "http://localhost:3000"
+      COHERE_MODEL: "command-a-03-2025"
+      RATE_LIMIT_WINDOW_MS: "60000"
+      RATE_LIMIT_MAX_REQUESTS: "10"
+      REQUEST_TIMEOUT_MS: "10000"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: ai-service-secret
+    type: Opaque
+    stringData:
+      MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/ai-db?appName=Cluster0"
+      JWT_SECRET: "access_secret_123456789_secure_key_service"
+      COHERE_API_KEY: "cohereapikey"
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: payment-service-config
+    data:
+      PORT: "4006"
+      CORS_ORIGIN: "http://localhost:3000"
+      UPLOAD_PATH: "uploads"
+      APPOINTMENT_SERVICE_URL: "http://appointment-service"
+      DOCTOR_SERVICE_URL: "http://doctor-service"
+      REQUEST_TIMEOUT_MS: "5000"
+      DEFAULT_CONSULTATION_FEE: "1000"
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: payment-service-secret
+    type: Opaque
+    stringData:
+      MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/payment-db?appName=Cluster0"
+      JWT_SECRET: "access_secret_123456789_secure_key_service"
+      STRIPE_SECRET_KEY: "stripkey"
+      STRIPE_WEBHOOK_SECRET: "whsec_test_webhook_secret"
+
