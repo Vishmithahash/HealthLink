@@ -23,6 +23,7 @@ module.exports = {
   appointmentServiceUrl: process.env.APPOINTMENT_SERVICE_URL || "http://localhost:4001",
   patientServiceUrl: process.env.PATIENT_SERVICE_URL || "http://localhost:4003",
   telemedicineServiceUrl: process.env.TELEMEDICINE_SERVICE_URL || "http://localhost:4004",
+  aiServiceUrl: process.env.AI_SERVICE_URL || "http://localhost:4005",
   telemedicineJoinBaseUrl: process.env.TELEMEDICINE_JOIN_BASE_URL || "https://telemedicine.healthlink.local/session",
   notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || "http://localhost:4005",
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 5000)

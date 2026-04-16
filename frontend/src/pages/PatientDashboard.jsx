@@ -30,6 +30,7 @@ const parseCsv = (value) =>
 
 const PatientDashboard = () => {
   const user = getUserInfo();
+  const authUserId = String(user?.id || user?.userId || "");
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("appointments");
   const [loading, setLoading] = useState(false);
@@ -40,6 +41,7 @@ const PatientDashboard = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [joiningAppointmentId, setJoiningAppointmentId] = useState("");
+  const [patientIdentifier, setPatientIdentifier] = useState("");
 
   const [profile, setProfile] = useState({
     fullName: user?.fullName || "",
@@ -135,17 +137,40 @@ const PatientDashboard = () => {
   };
 
   const loadDashboard = async () => {
-    if (!user?.id) {
-      return;
-    }
-
     setLoading(true);
     setError("");
 
     try {
-      const [profileData, appointmentData, doctorData, reportData, prescriptionData] = await Promise.all([
-        getPatientProfile().catch(() => null),
-        getPatientAppointments(user.id).catch(() => []),
+      const profileData = await getPatientProfile().catch(() => null);
+
+      const patientIdCandidates = [
+        authUserId,
+        profileData?.userId ? String(profileData.userId) : "",
+        profileData?._id ? String(profileData._id) : ""
+      ].filter(Boolean);
+
+      const uniqueCandidates = [...new Set(patientIdCandidates)];
+      let resolvedPatientId = "";
+
+      let appointmentData = [];
+      for (const candidateId of uniqueCandidates) {
+        try {
+          const result = await getPatientAppointments(candidateId);
+          appointmentData = Array.isArray(result) ? result : [];
+          resolvedPatientId = candidateId;
+          break;
+        } catch {
+          // Keep trying fallback IDs because services may store patient references differently.
+        }
+      }
+
+      if (!resolvedPatientId && uniqueCandidates.length > 0) {
+        resolvedPatientId = uniqueCandidates[0];
+      }
+
+      setPatientIdentifier(resolvedPatientId);
+
+      const [doctorData, reportData, prescriptionData] = await Promise.all([
         getDoctors({}).catch(() => []),
         getPatientReports().catch(() => []),
         getPatientPrescriptions().catch(() => [])
@@ -251,7 +276,7 @@ const PatientDashboard = () => {
     try {
       const session = await getOrCreateTelemedicineSession({
         appointmentId: appointment._id,
-        patientId: appointment.patientId || user?.id,
+        patientId: appointment.patientId || patientIdentifier || authUserId,
         doctorId: appointment.doctorId
       });
 
@@ -358,7 +383,7 @@ const PatientDashboard = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="rounded-2xl bg-gradient-to-r from-teal-700 to-cyan-700 text-white p-6 shadow-lg">
+      <div className="rounded-2xl bg-linear-to-r from-teal-700 to-cyan-700 text-white p-6 shadow-lg">
         <h1 className="text-2xl md:text-3xl font-bold">Patient Command Center</h1>
         <p className="opacity-90 mt-1">Manage appointments, records, and prescriptions from one place.</p>
       </div>

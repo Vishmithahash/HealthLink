@@ -20,5 +20,6 @@ module.exports = {
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || null,
   jwtSecret: process.env.JWT_SECRET || null,
   corsOrigin: process.env.CORS_ORIGIN || "*",
+  aiServiceUrl: process.env.AI_SERVICE_URL || "http://localhost:4005",
   maxReportSizeMb: Number(process.env.MAX_REPORT_SIZE_MB || 10)
 };

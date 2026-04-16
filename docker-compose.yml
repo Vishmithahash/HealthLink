@@ -85,6 +85,31 @@ services:
       CORS_ORIGIN: http://localhost:3000
       REQUEST_TIMEOUT_MS: 5000
 
+  ai-service:
+    build:
+      context: ./ai-service
+    image: healthlink-ai-service:local
+    container_name: healthlink-ai-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    ports:
+      - "4005:4005"
+    env_file:
+      - ./ai-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4005
+      JWT_SECRET: access_secret_123456789_secure_key_service
+      COHERE_MODEL: command-a-03-2025
+      CORS_ORIGIN: http://localhost:3000
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX_REQUESTS: 10
+      REQUEST_TIMEOUT_MS: 10000
+
   doctor-service:
     build:
       context: ./doctor-service
@@ -110,6 +135,7 @@ services:
       APPOINTMENT_SERVICE_URL: http://appointment-service:4001
       PATIENT_SERVICE_URL: http://patient-service:4003
       TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
+      AI_SERVICE_URL: http://ai-service:4005
       NOTIFICATION_SERVICE_URL: http://host.docker.internal:4005
       REQUEST_TIMEOUT_MS: 5000
 
@@ -133,6 +159,7 @@ services:
       JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
       AUTH_SERVICE_URL: http://auth-service:4000
       INTERNAL_SERVICE_API_KEY: healthlink-internal-key
+      AI_SERVICE_URL: http://ai-service:4005
       CORS_ORIGIN: http://localhost:3000
       MAX_REPORT_SIZE_MB: 10
 

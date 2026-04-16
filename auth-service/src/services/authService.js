@@ -6,23 +6,11 @@ const {
   generateRefreshToken,
   verifyRefreshToken
 } = require("../utils/token");
+const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doctorSpecialties");
 
 const normalizeIdentifier = (identifier) => identifier.trim().toLowerCase();
 const normalizeNic = (nic) => nic.trim().toUpperCase();
 const normalizePhoneNumber = (phoneNumber) => phoneNumber.trim();
-
-const DOCTOR_SPECIALTIES = [
-  "General Physician",
-  "Cardiologist",
-  "Dermatologist",
-  "Neurologist",
-  "Orthopedic",
-  "Pediatrician",
-  "Gynecologist",
-  "Psychiatrist",
-  "ENT Specialist",
-  "Ophthalmologist"
-];
 
 const issueTokensForUser = async (user) => {
   const accessToken = generateAccessToken(user);
@@ -40,13 +28,15 @@ const issueTokensForUser = async (user) => {
 
 const register = async ({ fullName, nic, phoneNumber, username, email, password, role, specialty }) => {
   const resolvedRole = role || "patient";
+  let resolvedSpecialty = null;
 
   if (resolvedRole === "Doctor") {
     if (!specialty) {
       throw new ApiError(400, "specialty is required when role is Doctor");
     }
 
-    if (!DOCTOR_SPECIALTIES.includes(specialty.trim())) {
+    resolvedSpecialty = resolveDoctorSpecialty(specialty);
+    if (!resolvedSpecialty) {
       throw new ApiError(400, `specialty must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`);
     }
   }
@@ -93,7 +83,7 @@ const register = async ({ fullName, nic, phoneNumber, username, email, password,
     email: normalizedEmail,
     passwordHash: password,
     role: resolvedRole,
-    specialty: resolvedRole === "Doctor" ? specialty.trim() : null
+    specialty: resolvedRole === "Doctor" ? resolvedSpecialty : null
   });
 
   const userWithSecrets = await User.findById(user._id).select("+passwordHash +refreshTokenHash");
