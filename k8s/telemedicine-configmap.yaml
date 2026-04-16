@@ -7,6 +7,7 @@ data:
   CORS_ORIGIN: "http://localhost:3000"
   JITSI_DOMAIN: "meet.jit.si"
   APPOINTMENT_SERVICE_URL: "http://appointment-service"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
   VERIFY_APPOINTMENT_WITH_SERVICE: "false"
   ALLOW_APPOINTMENT_FALLBACK: "true"
   REQUEST_TIMEOUT_MS: "5000"

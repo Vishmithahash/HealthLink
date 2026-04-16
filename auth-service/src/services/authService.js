@@ -1,6 +1,7 @@
 const bcrypt = require("bcrypt");
 const User = require("../models/User");
 const ApiError = require("../utils/ApiError");
+const env = require("../config/env");
 const {
   generateAccessToken,
   generateRefreshToken,
@@ -11,6 +12,82 @@ const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doc
 const normalizeIdentifier = (identifier) => identifier.trim().toLowerCase();
 const normalizeNic = (nic) => nic.trim().toUpperCase();
 const normalizePhoneNumber = (phoneNumber) => phoneNumber.trim();
+
+const sendWelcomeEmail = async ({ email, phoneNumber, fullName, role }) => {
+  if (!email) {
+    return false;
+  }
+
+  const message =
+    `Hello ${fullName || "there"}, welcome to HealthLink. ` +
+    `Your ${role || "user"} account is ready and you can start using the platform.`;
+
+  try {
+    const response = await fetch(`${env.notificationServiceUrl}/api/notifications/send-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        to: email,
+        toPhone: phoneNumber || null,
+        subject: "Welcome to HealthLink",
+        templateType: "custom",
+        message
+      }),
+      signal: AbortSignal.timeout(env.requestTimeoutMs)
+    });
+
+    if (!response.ok) {
+      const payload = await response.text();
+      console.error(`Welcome email dispatch failed: ${response.status} ${payload}`);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Welcome email dispatch failed: ${error.message}`);
+    return false;
+  }
+};
+
+const sendLoginWelcomeEmail = async ({ email, phoneNumber, fullName, role }) => {
+  if (!email) {
+    return false;
+  }
+
+  const message =
+    `Hello ${fullName || "there"}, welcome to HealthLink. ` +
+    `You have successfully logged in to your ${role || "user"} account.`;
+
+  try {
+    const response = await fetch(`${env.notificationServiceUrl}/api/notifications/send-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        to: email,
+        toPhone: phoneNumber || null,
+        subject: "Welcome to HealthLink",
+        templateType: "custom",
+        message
+      }),
+      signal: AbortSignal.timeout(env.requestTimeoutMs)
+    });
+
+    if (!response.ok) {
+      const payload = await response.text();
+      console.error(`Login welcome email dispatch failed: ${response.status} ${payload}`);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Login welcome email dispatch failed: ${error.message}`);
+    return false;
+  }
+};
 
 const issueTokensForUser = async (user) => {
   const accessToken = generateAccessToken(user);
@@ -89,6 +166,18 @@ const register = async ({ fullName, nic, phoneNumber, username, email, password,
   const userWithSecrets = await User.findById(user._id).select("+passwordHash +refreshTokenHash");
   const tokens = await issueTokensForUser(userWithSecrets);
 
+  const welcomeSent = await sendWelcomeEmail({
+    email: user.email,
+    phoneNumber: user.phoneNumber,
+    fullName: user.fullName,
+    role: user.role
+  });
+
+  if (welcomeSent) {
+    userWithSecrets.welcomeEmailSentAt = new Date();
+    await userWithSecrets.save();
+  }
+
   return {
     user: user.toSafeObject(),
     ...tokens
@@ -122,6 +211,20 @@ const login = async ({ username, password }) => {
   }
 
   const tokens = await issueTokensForUser(user);
+
+  if (!user.loginWelcomeEmailSentAt) {
+    const loginWelcomeSent = await sendLoginWelcomeEmail({
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+      fullName: user.fullName,
+      role: user.role
+    });
+
+    if (loginWelcomeSent) {
+      user.loginWelcomeEmailSentAt = new Date();
+      await user.save();
+    }
+  }
 
   return {
     user: user.toSafeObject(),
@@ -204,11 +307,29 @@ const listUsers = async ({ role }) => {
   return users.map((user) => user.toSafeObject());
 };
 
+const getInternalUserById = async ({ userId }) => {
+  const user = await User.findById(userId);
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  return {
+    id: user._id.toString(),
+    email: user.email,
+    phoneNumber: user.phoneNumber,
+    fullName: user.fullName,
+    role: user.role,
+    isActive: Boolean(user.isActive)
+  };
+};
+
 module.exports = {
   register,
   login,
   refresh,
   logout,
   getMe,
-  listUsers
+  listUsers,
+  getInternalUserById
 };

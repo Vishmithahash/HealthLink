@@ -76,6 +76,24 @@ const paymentSchema = new mongoose.Schema(
     paidAt: {
       type: Date,
       default: null
+    },
+    otpCodeHash: {
+      type: String,
+      default: null,
+      select: false
+    },
+    otpExpiresAt: {
+      type: Date,
+      default: null
+    },
+    otpVerifiedAt: {
+      type: Date,
+      default: null
+    },
+    otpAttempts: {
+      type: Number,
+      default: 0,
+      min: 0
     }
   },
   {

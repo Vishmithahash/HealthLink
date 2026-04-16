@@ -73,6 +73,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
       select: false
+    },
+    welcomeEmailSentAt: {
+      type: Date,
+      default: null
+    },
+    loginWelcomeEmailSentAt: {
+      type: Date,
+      default: null
     }
   },
   {

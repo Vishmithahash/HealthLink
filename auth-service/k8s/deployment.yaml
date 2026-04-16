@@ -55,6 +55,11 @@ spec:
                 configMapKeyRef:
                   name: auth-service-config
                   key: PATIENT_SERVICE_URL
+            - name: NOTIFICATION_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: auth-service-config
+                  key: NOTIFICATION_SERVICE_URL
             - name: INTERNAL_SERVICE_API_KEY
               valueFrom:
                 configMapKeyRef:

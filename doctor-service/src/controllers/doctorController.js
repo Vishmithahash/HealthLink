@@ -79,6 +79,8 @@ const acceptAppointment = wrap(async (req, res) => {
   const appointment = await doctorService.updateAppointmentDecision({
     appointmentId: req.params.id,
     action: "accept",
+    reason: req.body?.reason,
+    notificationContext: req.body,
     user: req.user,
     authHeader: req.headers.authorization
   });
@@ -91,6 +93,7 @@ const rejectAppointment = wrap(async (req, res) => {
     appointmentId: req.params.id,
     action: "reject",
     reason: req.body?.reason,
+    notificationContext: req.body,
     user: req.user,
     authHeader: req.headers.authorization
   });

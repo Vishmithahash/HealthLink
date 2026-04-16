@@ -143,6 +143,29 @@ const getHeaders = (authHeader) => ({
   Authorization: authHeader || ""
 });
 
+const getInternalHeaders = () => ({
+  "x-internal-api-key": env.internalServiceApiKey
+});
+
+const fetchUserContactFromAuth = async (userId) => {
+  if (!userId || !env.authServiceUrl || !env.internalServiceApiKey) {
+    return null;
+  }
+
+  try {
+    const response = await requestClient.get(
+      `${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}`,
+      {
+        headers: getInternalHeaders()
+      }
+    );
+
+    return asData(response);
+  } catch (error) {
+    return null;
+  }
+};
+
 const registerDoctor = async ({ payload, actor }) => {
   const required = ["userId", "fullName", "specialization", "licenseNumber"];
   const missing = required.filter((key) => !payload[key]);
@@ -337,19 +360,39 @@ const fetchAppointmentForDoctor = async ({ appointmentId, user, authHeader }) =>
   }
 };
 
-const notifyAppointmentDecision = async ({ appointmentId, status, reason, user, authHeader }) => {
+const notifyAppointmentDecision = async ({
+  appointmentId,
+  patientId,
+  status,
+  reason,
+  user,
+  authHeader,
+  notificationContext = {}
+}) => {
+  const patientContact = await fetchUserContactFromAuth(patientId);
+  const recipient = notificationContext.patientEmail || notificationContext.to || patientContact?.email;
+
+  if (!recipient) {
+    return;
+  }
+
   try {
     await requestClient.post(
-      `${env.notificationServiceUrl}/api/notifications/send`,
+      `${env.notificationServiceUrl}/api/notifications/send-email`,
       {
-        type: "APPOINTMENT_STATUS_UPDATED",
-        recipientRole: "patient",
-        data: {
-          appointmentId,
-          status,
-          reason: reason || "",
-          actorId: user.id
-        }
+        to: recipient,
+        patientPhone: notificationContext.patientPhone || patientContact?.phoneNumber || null,
+        subject: notificationContext.subject || "Appointment Status Update",
+        templateType: "custom",
+        message:
+          notificationContext.message ||
+          `Hello ${patientContact?.fullName || "Patient"}, your appointment ${appointmentId} has been ${status}${
+            reason ? `. Reason: ${reason}` : ""
+          }.`,
+        appointmentId,
+        status,
+        reason: reason || "",
+        actorId: user.id
       },
       {
         headers: getHeaders(authHeader)
@@ -360,13 +403,13 @@ const notifyAppointmentDecision = async ({ appointmentId, status, reason, user, 
   }
 };
 
-const updateAppointmentDecision = async ({ appointmentId, action, reason, user, authHeader }) => {
+const updateAppointmentDecision = async ({ appointmentId, action, reason, user, authHeader, notificationContext }) => {
   if (normalizeRole(user.role) !== "doctor") {
     throw new ServiceError(403, "Only doctors can accept or reject appointments");
   }
 
   await ensureDoctor(user.id);
-  await fetchAppointmentForDoctor({ appointmentId, user, authHeader });
+  const appointment = await fetchAppointmentForDoctor({ appointmentId, user, authHeader });
 
   const status = action === "accept" ? "confirmed" : "rejected";
 
@@ -381,7 +424,15 @@ const updateAppointmentDecision = async ({ appointmentId, action, reason, user, 
       }
     );
 
-    await notifyAppointmentDecision({ appointmentId, status, reason, user, authHeader });
+    await notifyAppointmentDecision({
+      appointmentId,
+      patientId: appointment.patientId,
+      status,
+      reason,
+      user,
+      authHeader,
+      notificationContext
+    });
 
     return asData(response);
   } catch (error) {
@@ -549,24 +600,32 @@ const createPrescription = async ({ payload, user, authHeader }) => {
     throw mapAxiosError(syncError, "Failed to sync prescription to Patient Service");
   }
 
-  try {
-    await requestClient.post(
-      `${env.notificationServiceUrl}/api/notifications/send`,
-      {
-        type: "PRESCRIPTION_ISSUED",
-        recipientId: String(resolvedPatientId),
-        data: {
+  const patientContact = await fetchUserContactFromAuth(resolvedPatientId);
+  const prescriptionRecipient = payload.patientEmail || payload.to || patientContact?.email;
+
+  if (prescriptionRecipient) {
+    try {
+      await requestClient.post(
+        `${env.notificationServiceUrl}/api/notifications/send-email`,
+        {
+          to: prescriptionRecipient,
+          patientPhone: payload.patientPhone || patientContact?.phoneNumber || null,
+          subject: payload.subject || "Prescription Issued",
+          templateType: "custom",
+          message:
+            payload.message ||
+            `Hello ${patientContact?.fullName || "Patient"}, a prescription was issued for appointment ${appointmentId}. Prescription ID: ${prescription._id.toString()}.`,
           appointmentId,
           prescriptionId: prescription._id.toString(),
           doctorId: doctor.userId
+        },
+        {
+          headers: getHeaders(authHeader)
         }
-      },
-      {
-        headers: getHeaders(authHeader)
-      }
-    );
-  } catch (error) {
-    // Best-effort notification only.
+      );
+    } catch (error) {
+      // Best-effort notification only.
+    }
   }
 
   return prescription;

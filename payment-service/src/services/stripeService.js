@@ -20,6 +20,10 @@ const retrievePaymentIntent = async (id) => {
   return stripe.paymentIntents.retrieve(id);
 };
 
+const retrievePaymentMethod = async (id) => {
+  return stripe.paymentMethods.retrieve(id);
+};
+
 const constructWebhookEvent = (rawBody, signature) => {
   const webhookSecrets = String(env.stripeWebhookSecret || "")
     .split(",")
@@ -60,6 +64,7 @@ module.exports = {
   toMinorUnits,
   createPaymentIntent,
   retrievePaymentIntent,
+  retrievePaymentMethod,
   constructWebhookEvent,
   mapStripeIntentStatus
 };
