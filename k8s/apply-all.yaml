@@ -130,7 +130,7 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/ai-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
-      COHERE_API_KEY: "cohereapikey"
+      COHERE_API_KEY: ""
   - apiVersion: v1
     kind: ConfigMap
     metadata:
@@ -167,10 +167,10 @@ items:
     type: Opaque
     stringData:
       EMAIL_USER: "hashendravishmi@gmail.com"
-      EMAIL_PASS: "rzvj kfrv zcfk astq"
+      EMAIL_PASS: "rpqx nvaf vjng zklg"
       EMAIL_FROM: "Smart Healthcare Platform <hashendravishmi@gmail.com>"
-      TWILIO_ACCOUNT_SID: "twilio_account_sid"
-      TWILIO_AUTH_TOKEN: "twilio_auth_token"
+      TWILIO_ACCOUNT_SID: ""
+      TWILIO_AUTH_TOKEN: "728b2c0f7eb7ef03d751bb11d33bfb8d"
       TWILIO_PHONE_NUMBER: "+12183079057"
       TWILIO_VERIFIED_TO: "+94704867864"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
@@ -183,5 +183,5 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/payment-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
-      STRIPE_SECRET_KEY: "stripe_secret_key"
-      STRIPE_WEBHOOK_SECRET: "stripe_webhook_secret"
+      STRIPE_SECRET_KEY: ""
+      STRIPE_WEBHOOK_SECRET: "whsec_rbRZfDEE4rCo836tVJx6zUy8KXdaHaGE,whsec_68d4e39548a84f7075f25d064e7ae34aba8b02f97764202c5d06c90f2393612a"
