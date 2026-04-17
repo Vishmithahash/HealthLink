@@ -110,6 +110,20 @@ router.post(
 );
 
 router.post(
+  "/send-otp",
+  allowRoles("patient", "admin"),
+  [
+    body("paymentId")
+      .notEmpty()
+      .withMessage("paymentId is required")
+      .isMongoId()
+      .withMessage("paymentId must be a valid Mongo ID"),
+    validate
+  ],
+  paymentController.sendStripeOtp
+);
+
+router.post(
   "/upload-slip",
   allowRoles("patient"),
   uploadSlipMiddleware,

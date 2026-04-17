@@ -10,6 +10,11 @@ export const verifyStripePayment = async (payload) => {
 	return extractData(response);
 };
 
+export const sendStripeOtp = async (payload) => {
+	const response = await paymentApi.post("/send-otp", payload);
+	return extractData(response);
+};
+
 export const uploadBankSlip = async (formData) => {
 	const response = await paymentApi.post("/upload-slip", formData, {
 		headers: {

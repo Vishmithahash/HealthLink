@@ -49,9 +49,9 @@ export const startTelemedicineSession = async (sessionId) => {
   }
 };
 
-export const endTelemedicineSession = async (sessionId) => {
+export const endTelemedicineSession = async (sessionId, payload = {}) => {
   try {
-    const response = await telemedicineApi.patch(`/session/${sessionId}/end`);
+    const response = await telemedicineApi.patch(`/session/${sessionId}/end`, payload);
     return extractData(response);
   } catch (error) {
     throw normalizeTelemedicineError(error);

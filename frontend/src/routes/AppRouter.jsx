@@ -4,6 +4,7 @@ import ProtectedRoute from './ProtectedRoute';
 import Layout from '../components/Layout';
 import Login from '../pages/Login';
 import Register from '../pages/Register';
+import Home from '../pages/Home';
 
 // Lazy load dashboards
 const PatientDashboard = lazy(() => import('../pages/PatientDashboard'));
@@ -23,6 +24,7 @@ const AppRouter = () => {
     return (
         <Suspense fallback={<FallbackLoader />}>
             <Routes>
+                <Route path="/" element={<Home />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
 
@@ -55,8 +57,8 @@ const AppRouter = () => {
                     </Route>
                 </Route>
 
-                {/* Redirect root to login for now */}
-                <Route path="/" element={<Navigate to="/login" replace />} />
+                {/* Keep explicit redirect for legacy URL usage */}
+                <Route path="/home" element={<Navigate to="/" replace />} />
 
                 <Route path="*" element={<div className="min-h-screen flex items-center justify-center flex-col text-slate-800">
                     <h1 className="text-4xl font-bold">404</h1>

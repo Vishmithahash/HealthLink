@@ -2,10 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Activity, ShieldPlus } from "lucide-react";
 import { register } from "../services/authService";
-import { registerPatient } from "../services/patientService";
-import { registerDoctor } from "../services/doctorService";
 import { extractErrorMessage } from "../services/api";
-import { getDashboardByRole, setSession } from "../utils/auth";
 
 const specialties = [
   "General Physician",
@@ -24,7 +21,6 @@ const Register = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
 
   const [form, setForm] = useState({
     fullName: "",
@@ -45,32 +41,10 @@ const Register = () => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const registerProfile = async (authUser) => {
-    if (form.role === "patient") {
-      await registerPatient({
-        userId: authUser.id,
-        fullName: form.fullName,
-        phone: form.phoneNumber
-      });
-      return;
-    }
-
-    if (form.role === "Doctor") {
-      await registerDoctor({
-        userId: authUser.id,
-        fullName: form.fullName,
-        specialization: form.specialty,
-        licenseNumber: form.licenseNumber,
-        qualification: form.qualification
-      });
-    }
-  };
-
   const handleSubmit = async (event) => {
     event.preventDefault();
     setLoading(true);
     setError("");
-    setWarning("");
 
     try {
       const authPayload = {
@@ -85,22 +59,17 @@ const Register = () => {
 
       if (isDoctor) {
         authPayload.specialty = form.specialty;
+        authPayload.licenseNumber = form.licenseNumber;
+        authPayload.qualification = form.qualification;
       }
 
-      const result = await register(authPayload);
-      setSession({
-        user: result.user,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken
+      await register(authPayload);
+      navigate("/login", {
+        replace: true,
+        state: {
+          registrationSuccessMessage: "Registration successful. Please log in to continue."
+        }
       });
-
-      try {
-        await registerProfile(result.user);
-      } catch (profileError) {
-        setWarning(`Account created, but profile setup is incomplete: ${extractErrorMessage(profileError, "Profile service unavailable")}`);
-      }
-
-      navigate(getDashboardByRole(result.user?.role), { replace: true });
     } catch (err) {
       setError(extractErrorMessage(err, "Registration failed"));
     } finally {
@@ -184,8 +153,6 @@ const Register = () => {
             ) : null}
 
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-            {warning ? <p className="text-sm text-amber-700">{warning}</p> : null}
-
             <button disabled={loading} type="submit" className="w-full py-2.5 px-4 rounded-md bg-teal-700 hover:bg-teal-800 text-white font-semibold inline-flex justify-center items-center gap-2 disabled:opacity-70">
               <ShieldPlus className="h-4 w-4" />
               {loading ? "Creating account..." : "Create Account"}

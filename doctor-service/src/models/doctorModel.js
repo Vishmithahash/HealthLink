@@ -118,7 +118,7 @@ const doctorSchema = new mongoose.Schema(
       timezone: {
         type: String,
         trim: true,
-        default: "UTC"
+        default: "Asia/Colombo"
       }
     },
     availabilitySlots: {

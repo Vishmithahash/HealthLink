@@ -22,6 +22,38 @@ const sendError = (res, statusCode, message, details = null) => {
 
 const getAuthHeader = (req) => req.headers.authorization || "";
 
+const getInternalApiKey = () => String(process.env.INTERNAL_SERVICE_API_KEY || "").trim();
+
+const fetchUserContactFromAuth = async (userId) => {
+  if (!userId) {
+    return null;
+  }
+
+  const authServiceUrl = process.env.AUTH_SERVICE_URL || "http://localhost:4000";
+  const timeout = Number(process.env.REQUEST_TIMEOUT_MS || 5000);
+  const internalApiKey = getInternalApiKey();
+
+  if (!internalApiKey) {
+    return null;
+  }
+
+  try {
+    const response = await axios.get(
+      `${authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}`,
+      {
+        headers: {
+          "x-internal-api-key": internalApiKey
+        },
+        timeout
+      }
+    );
+
+    return response.data?.data || null;
+  } catch {
+    return null;
+  }
+};
+
 const assertParticipantByPayload = (user, payload) => {
   const role = normalizeRole(user.role);
 
@@ -94,10 +126,17 @@ const verifyAppointmentIfRequired = async ({ req, appointmentId, doctorId, patie
 };
 
 const sendConsultationCompletedNotification = async ({ req, session }) => {
-  const patientEmail = req.body?.patientEmail || req.query?.patientEmail;
-  const doctorEmail = req.body?.doctorEmail || req.query?.doctorEmail;
-  const patientPhone = req.body?.patientPhone || req.query?.patientPhone;
-  const doctorPhone = req.body?.doctorPhone || req.query?.doctorPhone;
+  const [patientContact, doctorContact] = await Promise.all([
+    fetchUserContactFromAuth(session.patientId),
+    fetchUserContactFromAuth(session.doctorId)
+  ]);
+
+  const patientEmail = req.body?.patientEmail || req.query?.patientEmail || patientContact?.email || null;
+  const doctorEmail = req.body?.doctorEmail || req.query?.doctorEmail || doctorContact?.email || null;
+  const patientPhone = req.body?.patientPhone || req.query?.patientPhone || patientContact?.phoneNumber || null;
+  const doctorPhone = req.body?.doctorPhone || req.query?.doctorPhone || doctorContact?.phoneNumber || null;
+  const patientName = req.body?.patientName || patientContact?.fullName || "Patient";
+  const doctorName = req.body?.doctorName || doctorContact?.fullName || "Doctor";
 
   if (!patientEmail && !doctorEmail && !patientPhone && !doctorPhone) {
     return;
@@ -116,8 +155,8 @@ const sendConsultationCompletedNotification = async ({ req, session }) => {
         patientPhone,
         doctorEmail,
         doctorPhone,
-        patientName: req.body?.patientName,
-        doctorName: req.body?.doctorName,
+        patientName,
+        doctorName,
         appointmentId: session.appointmentId,
         consultationDate: (session.endedAt || new Date()).toISOString(),
         message: req.body?.message || "Your consultation session has been completed."

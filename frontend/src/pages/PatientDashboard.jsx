@@ -17,17 +17,29 @@ import PaymentForm from "../components/PaymentForm";
 import {
   createStripeIntent,
   getPaymentsByAppointment,
+  sendStripeOtp,
   uploadBankSlip,
   verifyStripePayment
 } from "../services/paymentService";
 import { extractErrorMessage } from "../services/api";
 import { getOrCreateTelemedicineSession, startTelemedicineSession } from "../services/telemedicineService";
+import { notifyCustomBestEffort, pushLocalNotification } from "../services/notificationService";
 import SymptomChecker from "./SymptomChecker";
 
 const tabs = ["appointments", "book", "profile", "reports", "prescriptions", "symptom-checker"];
 
 const bloodGroups = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "UNKNOWN"];
 const genders = ["male", "female", "other", "prefer_not_to_say"];
+const weekdayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAY_TO_INDEX = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6
+};
 
 const stringifyList = (value) => (Array.isArray(value) ? value.join(", ") : "");
 
@@ -61,6 +73,7 @@ const PatientDashboard = () => {
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentClientSecret, setPaymentClientSecret] = useState("");
   const [paymentRecordId, setPaymentRecordId] = useState("");
+  const [paymentOtpMeta, setPaymentOtpMeta] = useState({ dispatched: null, sentTo: "", reason: "" });
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentError, setPaymentError] = useState("");
   const [slipFile, setSlipFile] = useState(null);
@@ -108,6 +121,129 @@ const PatientDashboard = () => {
     }));
   }, [doctors]);
 
+  const selectedDoctor = useMemo(() => {
+    return doctors.find((doctor) => String(doctor?.userId || doctor?._id || "") === String(bookingForm.doctorId || "")) || null;
+  }, [doctors, bookingForm.doctorId]);
+
+  const parseTimeToMinutes = (value) => {
+    const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
+    if (!match) {
+      return null;
+    }
+    return Number(match[1]) * 60 + Number(match[2]);
+  };
+
+  const getZonedDateParts = (date, timeZone) => {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+
+    const parts = formatter.formatToParts(date);
+    const weekdayToken = parts.find((part) => part.type === "weekday")?.value;
+    const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value || 0);
+
+    return {
+      weekday: WEEKDAY_TO_INDEX[weekdayToken] ?? date.getUTCDay(),
+      minutes: hour * 60 + minute
+    };
+  };
+
+  const bookingAvailabilityHint = useMemo(() => {
+    if (!selectedDoctor) {
+      return "Select a doctor to view availability guidance.";
+    }
+
+    const slots = Array.isArray(selectedDoctor.availabilitySlots) ? selectedDoctor.availabilitySlots : [];
+    const recurring = slots.filter((slot) => slot?.dayOfWeek != null && slot?.startTime && slot?.endTime);
+    const unavailable = Array.isArray(selectedDoctor.unavailablePeriods) ? selectedDoctor.unavailablePeriods : [];
+    const workStart = selectedDoctor?.workingHours?.start || "09:00";
+    const workEnd = selectedDoctor?.workingHours?.end || "17:00";
+    const tz = selectedDoctor?.workingHours?.timezone || "Asia/Colombo";
+
+    const recurringText = recurring.length > 0
+      ? recurring
+        .map((slot) => `${weekdayLabels[Number(slot.dayOfWeek)] || `Day ${slot.dayOfWeek}`}: ${slot.startTime}-${slot.endTime}`)
+        .join(" | ")
+      : `Working hours: ${workStart}-${workEnd} (${tz})`;
+
+    const unavailableText = unavailable.length > 0
+      ? `Unavailable periods: ${unavailable.map((period) => `${new Date(period.from).toLocaleString()} to ${new Date(period.to).toLocaleString()}`).join(" | ")}`
+      : "No unavailable periods set.";
+
+    return `${recurringText}. ${unavailableText}`;
+  }, [selectedDoctor]);
+
+  const isBookingTimeInsideDoctorAvailability = () => {
+    if (!selectedDoctor || !bookingForm.scheduledAt) {
+      return { valid: true, message: "" };
+    }
+
+    const scheduledStart = new Date(bookingForm.scheduledAt);
+    if (Number.isNaN(scheduledStart.getTime())) {
+      return { valid: false, message: "Please choose a valid appointment date and time." };
+    }
+
+    const duration = Number(bookingForm.durationMinutes || 30);
+    const scheduledEnd = new Date(scheduledStart.getTime() + duration * 60000);
+    const doctorTimeZone = String(selectedDoctor?.workingHours?.timezone || "Asia/Colombo");
+
+    const unavailable = Array.isArray(selectedDoctor.unavailablePeriods) ? selectedDoctor.unavailablePeriods : [];
+    const overlapsBlockedPeriod = unavailable.some((period) => {
+      const from = new Date(period.from);
+      const to = new Date(period.to);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        return false;
+      }
+      return scheduledStart < to && scheduledEnd > from;
+    });
+
+    if (overlapsBlockedPeriod) {
+      return { valid: false, message: "Selected time overlaps a doctor unavailable period." };
+    }
+
+    const startParts = getZonedDateParts(scheduledStart, doctorTimeZone);
+    const endParts = getZonedDateParts(scheduledEnd, doctorTimeZone);
+
+    if (startParts.weekday !== endParts.weekday) {
+      return { valid: false, message: "Selected time spans across multiple days in doctor's timezone." };
+    }
+
+    const startMinutes = startParts.minutes;
+    const endMinutes = endParts.minutes;
+
+    const slots = Array.isArray(selectedDoctor.availabilitySlots) ? selectedDoctor.availabilitySlots : [];
+    const recurring = slots.filter((slot) => slot?.dayOfWeek != null && slot?.startTime && slot?.endTime);
+
+    if (recurring.length > 0) {
+      const day = startParts.weekday;
+      const matchesSlot = recurring.some((slot) => {
+        const slotStart = parseTimeToMinutes(slot.startTime);
+        const slotEnd = parseTimeToMinutes(slot.endTime);
+        return Number(slot.dayOfWeek) === day && slotStart != null && slotEnd != null && startMinutes >= slotStart && endMinutes <= slotEnd;
+      });
+
+      if (!matchesSlot) {
+        return { valid: false, message: "Selected time is outside doctor weekly availability slots." };
+      }
+
+      return { valid: true, message: "" };
+    }
+
+    const workingStart = parseTimeToMinutes(selectedDoctor?.workingHours?.start || "09:00");
+    const workingEnd = parseTimeToMinutes(selectedDoctor?.workingHours?.end || "17:00");
+
+    if (workingStart != null && workingEnd != null && (startMinutes < workingStart || endMinutes > workingEnd)) {
+      return { valid: false, message: "Selected time is outside doctor working hours." };
+    }
+
+    return { valid: true, message: "" };
+  };
+
   const doctorNameById = useMemo(() => {
     const entries = doctors.flatMap((doctor) => {
       const name = doctor?.fullName || doctor?.name;
@@ -117,6 +253,12 @@ const PatientDashboard = () => {
 
     return new Map(entries);
   }, [doctors]);
+
+  const reportConsultationOptions = useMemo(() => {
+    return (Array.isArray(appointments) ? appointments : [])
+      .filter((appointment) => ["confirmed", "completed"].includes(String(appointment?.status || "").toLowerCase()))
+      .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime());
+  }, [appointments]);
 
   const resolveDoctorName = (doctorId) => {
     const key = String(doctorId || "");
@@ -308,6 +450,11 @@ const PatientDashboard = () => {
     setSuccess("");
 
     try {
+      const scheduleCheck = isBookingTimeInsideDoctorAvailability();
+      if (!scheduleCheck.valid) {
+        throw new Error(scheduleCheck.message);
+      }
+
       await bookAppointment({
         doctorId: bookingForm.doctorId,
         specialty: bookingForm.specialty,
@@ -334,6 +481,22 @@ const PatientDashboard = () => {
     setSuccess("");
     try {
       await cancelAppointment(appointmentId, { cancelledReason: "Cancelled by patient" });
+
+      await notifyCustomBestEffort({
+        title: "Appointment Cancelled",
+        message: `Your appointment ${appointmentId} was cancelled successfully.`,
+        category: "appointment",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null,
+          patientName: profile?.fullName || user?.fullName || "Patient"
+        },
+        extraPayload: {
+          appointmentId,
+          status: "cancelled"
+        }
+      });
+
       setSuccess("Appointment cancelled.");
       setToast({ type: "success", message: "Appointment cancelled." });
       await loadDashboard();
@@ -482,12 +645,35 @@ const PatientDashboard = () => {
           emergencyContact: payload.emergencyContact
         });
 
+        await notifyCustomBestEffort({
+          title: "Patient Profile Created",
+          message: "Your patient profile was created successfully.",
+          category: "profile",
+          recipients: {
+            patientEmail: user?.email || null,
+            patientPhone: payload.phone || user?.phoneNumber || null,
+            patientName: payload.fullName || user?.fullName || "Patient"
+          }
+        });
+
         setSuccess("Patient profile created successfully.");
         setToast({ type: "success", message: "Patient profile created successfully." });
         setProfileMissing(false);
         await loadDashboard();
       } else {
         await updatePatientProfile(payload);
+
+        await notifyCustomBestEffort({
+          title: "Patient Profile Updated",
+          message: "Your patient profile was updated successfully.",
+          category: "profile",
+          recipients: {
+            patientEmail: user?.email || null,
+            patientPhone: payload.phone || user?.phoneNumber || null,
+            patientName: payload.fullName || user?.fullName || "Patient"
+          }
+        });
+
         setSuccess("Profile updated successfully.");
         setToast({ type: "success", message: "Profile updated successfully." });
       }
@@ -522,6 +708,18 @@ const PatientDashboard = () => {
 
     try {
       await uploadMedicalReport(formData);
+
+      await notifyCustomBestEffort({
+        title: "Medical Report Uploaded",
+        message: `Your medical report "${reportMeta.title || file.name}" was uploaded successfully.`,
+        category: "report",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null,
+          patientName: profile?.fullName || user?.fullName || "Patient"
+        }
+      });
+
       setSuccess("Medical report uploaded.");
       setToast({ type: "success", message: "Medical report uploaded." });
       setFile(null);
@@ -542,6 +740,21 @@ const PatientDashboard = () => {
 
     try {
       await deletePatientReport(reportId);
+
+      await notifyCustomBestEffort({
+        title: "Medical Report Deleted",
+        message: `Medical report ${reportId} was deleted from your records.`,
+        category: "report",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null,
+          patientName: profile?.fullName || user?.fullName || "Patient"
+        },
+        extraPayload: {
+          reportId
+        }
+      });
+
       setSuccess("Report deleted.");
       setToast({ type: "success", message: "Report deleted." });
       await loadDashboard();
@@ -568,6 +781,7 @@ const PatientDashboard = () => {
     setPaymentMethod("card");
     setPaymentClientSecret("");
     setPaymentRecordId("");
+    setPaymentOtpMeta({ dispatched: null, sentTo: "", reason: "" });
     setPaymentBusy(false);
     setPaymentError("");
     setSlipFile(null);
@@ -581,6 +795,7 @@ const PatientDashboard = () => {
     setPaymentMethod("card");
     setPaymentClientSecret("");
     setPaymentRecordId("");
+    setPaymentOtpMeta({ dispatched: null, sentTo: "", reason: "" });
     setPaymentError("");
     setSlipFile(null);
     setPaymentModalOpen(true);
@@ -603,6 +818,11 @@ const PatientDashboard = () => {
 
       setPaymentClientSecret(intent?.clientSecret || "");
       setPaymentRecordId(String(intent?.paymentId || ""));
+      setPaymentOtpMeta({
+        dispatched: intent?.otpDispatched === true,
+        sentTo: intent?.otpSentTo || "",
+        reason: intent?.otpDispatchReason || ""
+      });
     } catch (err) {
       setPaymentError(extractErrorMessage(err, "Could not initialize card payment"));
     } finally {
@@ -610,60 +830,83 @@ const PatientDashboard = () => {
     }
   };
 
-  const handleCardPaymentSuccess = async (paymentIntent) => {
-    if (paymentIntent?.demo) {
-      setPaymentBusy(true);
-      setPaymentError("");
-
-      try {
-        await verifyStripePayment({
-          paymentId: paymentRecordId || undefined,
-          demoSuccess: true
-        });
-
-        setSuccess("Payment completed successfully.");
-        setToast({ type: "success", message: "Payment completed successfully." });
-        closePaymentModal();
-        await loadDashboard();
-      } catch (err) {
-        const message = extractErrorMessage(err, "Payment verification failed");
-        const normalized = String(message || "").toLowerCase();
-
-        if (normalized.includes("return_url") || normalized.includes("allow_redirects")) {
-          setPaymentClientSecret("");
-          setPaymentRecordId("");
-          setPaymentError("Previous payment session is incompatible. Click Initialize Card Payment to create a new session and retry.");
-          setToast({
-            type: "error",
-            message: "Payment session expired. Please initialize card payment again."
-          });
-        } else {
-          setPaymentError(message);
-          setToast({ type: "error", message });
-        }
-      } finally {
-        setPaymentBusy(false);
-      }
-
-      return;
+  const sendCardPaymentOtp = async ({ cardType }) => {
+    if (!paymentRecordId) {
+      throw new Error("Missing payment session. Please initialize payment first.");
     }
 
+    const result = await sendStripeOtp({
+      paymentId: paymentRecordId,
+      cardType
+    });
+
+    setPaymentOtpMeta({
+      dispatched: result?.otpDispatched === true,
+      sentTo: result?.otpSentTo || "",
+      reason: result?.otpDispatchReason || ""
+    });
+
+    pushLocalNotification({
+      title: result?.otpDispatched ? "Payment OTP Sent" : "Payment OTP Dispatch Failed",
+      message: result?.otpDispatched
+        ? `OTP sent${result?.otpSentTo ? ` to ${result.otpSentTo}` : ""} for payment verification.`
+        : `OTP dispatch failed: ${result?.otpDispatchReason || "Unknown reason"}`,
+      category: "payment",
+      status: result?.otpDispatched ? "sent" : "failed",
+      recipients: {
+        patientEmail: user?.email || null,
+        patientPhone: profile?.phone || user?.phoneNumber || null
+      }
+    });
+
+    if (!result?.otpDispatched) {
+      throw new Error(result?.otpDispatchReason || "OTP dispatch failed");
+    }
+
+    return result;
+  };
+
+  const handleCardPaymentSuccess = async (paymentIntent) => {
     setPaymentBusy(true);
     setPaymentError("");
 
     try {
       await verifyStripePayment({
         paymentId: paymentRecordId || undefined,
-        paymentIntentId: paymentIntent?.id
+        paymentIntentId: paymentIntent?.id,
+        otp: paymentIntent?.otp,
+        cardType: paymentIntent?.cardType,
+        demoSuccess: true
       });
 
       setSuccess("Payment completed successfully.");
       setToast({ type: "success", message: "Payment completed successfully." });
+      pushLocalNotification({
+        title: "Payment Completed",
+        message: `Your payment of ${paymentCurrency} ${Number(paymentAmount || 0).toFixed(2)} was completed successfully.`,
+        category: "payment",
+        status: "sent",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null
+        }
+      });
       closePaymentModal();
       await loadDashboard();
     } catch (err) {
-      setPaymentError(extractErrorMessage(err, "Payment completed in Stripe but verification failed"));
-      setToast({ type: "error", message: extractErrorMessage(err, "Payment completed in Stripe but verification failed") });
+      const message = extractErrorMessage(err, "Payment verification failed");
+      setPaymentError(message);
+      setToast({ type: "error", message });
+      pushLocalNotification({
+        title: "Payment Verification Failed",
+        message,
+        category: "payment",
+        status: "failed",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null
+        }
+      });
     } finally {
       setPaymentBusy(false);
     }
@@ -804,6 +1047,8 @@ const PatientDashboard = () => {
                 amount={paymentAmount}
                 currency={paymentCurrency}
                 clientSecret={paymentClientSecret}
+                otpMeta={paymentOtpMeta}
+                onSendOtp={sendCardPaymentOtp}
                 onPaymentSuccess={handleCardPaymentSuccess}
                 onCancel={closePaymentModal}
               />
@@ -1020,6 +1265,7 @@ const PatientDashboard = () => {
               onChange={(e) => setBookingForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
               className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
             />
+            <p className="mt-1 text-xs text-slate-500">{bookingAvailabilityHint}</p>
           </div>
           <div>
             <label className="text-sm text-slate-700">Duration (minutes)</label>
@@ -1124,7 +1370,14 @@ const PatientDashboard = () => {
             </div>
             <div>
               <label className="text-sm text-slate-700">Consultation ID (optional)</label>
-              <input value={reportMeta.consultationId} onChange={(e) => setReportMeta((prev) => ({ ...prev, consultationId: e.target.value }))} className="w-full border border-slate-300 rounded-md px-3 py-2" />
+              <select value={reportMeta.consultationId} onChange={(e) => setReportMeta((prev) => ({ ...prev, consultationId: e.target.value }))} className="w-full border border-slate-300 rounded-md px-3 py-2 bg-white">
+                <option value="">No consultation selected</option>
+                {reportConsultationOptions.map((appointment) => (
+                  <option key={appointment._id} value={appointment._id}>
+                    {`${new Date(appointment.scheduledAt).toLocaleString()} | ${resolveDoctorName(appointment.doctorId)} | ${appointment._id}`}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="text-sm text-slate-700">Notes</label>
@@ -1201,7 +1454,6 @@ const PatientDashboard = () => {
 
       {activeTab === "symptom-checker" ? (
         <div>
-          <h2 className="font-semibold text-slate-900 inline-flex items-center gap-2 mb-3"><Bot className="h-5 w-5 text-teal-700" /> AI Symptom Checker</h2>
           <SymptomChecker />
         </div>
       ) : null}

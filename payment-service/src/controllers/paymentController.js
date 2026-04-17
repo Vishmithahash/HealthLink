@@ -328,6 +328,19 @@ const maskEmail = (email) => {
   return `${local[0]}${"*".repeat(Math.max(1, local.length - 2))}${local[local.length - 1]}@${domain}`;
 };
 
+const maskPhone = (phone) => {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+
+  if (digits.length <= 4) {
+    return `***${digits}`;
+  }
+
+  return `${"*".repeat(Math.max(4, digits.length - 4))}${digits.slice(-4)}`;
+};
+
 const fetchUserContactFromAuth = async (userId) => {
   if (!userId || !env.authServiceUrl || !env.internalServiceApiKey) {
     return null;
@@ -355,13 +368,30 @@ const sendPaymentOtpNotification = async ({ email, phoneNumber, fullName, otpCod
     `Hello ${fullName || "there"}, your HealthLink payment OTP is ${otpCode}. ` +
     `This code expires in ${expiryMinutes} minute(s).`;
 
+  const normalizedEmail = String(email || "").trim();
+  const normalizedPhone = String(phoneNumber || "").trim();
+
+  if (!normalizedEmail && !normalizedPhone) {
+    return {
+      sent: false,
+      reason: "No email or phone available for OTP notification"
+    };
+  }
+
   try {
-    await httpClient.post(`${env.notificationServiceUrl}/api/notifications/send-email`, {
-      to: email,
-      patientPhone: phoneNumber || null,
-      subject: "HealthLink Payment OTP",
-      templateType: "custom",
-      message
+    await httpClient.post(`${env.notificationServiceUrl}/api/notifications/send`, {
+      type: "APPOINTMENT_STATUS_UPDATED",
+      to: normalizedEmail || undefined,
+        data: {
+        toPhone: normalizedPhone || undefined,
+          to: normalizedEmail || undefined,
+          patientEmail: normalizedEmail || undefined,
+        patientPhone: normalizedPhone || undefined,
+        patientName: fullName || "there",
+        message,
+        subject: "HealthLink Payment OTP",
+        templateType: "custom"
+      }
     });
     return {
       sent: true,
@@ -373,6 +403,41 @@ const sendPaymentOtpNotification = async ({ email, phoneNumber, fullName, otpCod
       reason: error.response?.data?.message || error.message
     };
   }
+};
+
+const issueOtpForStripePayment = async ({ payment, userContact }) => {
+  if (!userContact?.email && !userContact?.phoneNumber) {
+    throw new ServiceError(400, "Valid user phone number or email is required to send OTP for card payments");
+  }
+
+  const otpCode = generateOtpCode();
+  const expiryMs = Math.max(1, env.paymentOtpExpiryMinutes) * 60 * 1000;
+
+  payment.otpCodeHash = hashOtp({
+    otp: otpCode,
+    paymentId: payment._id.toString()
+  });
+  payment.otpExpiresAt = new Date(Date.now() + expiryMs);
+  payment.otpVerifiedAt = null;
+  payment.otpAttempts = 0;
+  await payment.save();
+
+  const otpDispatch = await sendPaymentOtpNotification({
+    email: userContact.email,
+    phoneNumber: userContact.phoneNumber,
+    fullName: userContact.fullName,
+    otpCode
+  });
+
+  const otpMaskedDestination = userContact.phoneNumber
+    ? maskPhone(userContact.phoneNumber)
+    : maskEmail(userContact.email);
+
+  return {
+    otpDispatch,
+    otpMaskedDestination,
+    otpExpiresAt: payment.otpExpiresAt
+  };
 };
 
 const validateOtpAgainstPayment = async ({ payment, otp }) => {
@@ -523,41 +588,47 @@ const createIntent = withErrorHandling(async (req, res) => {
     status: "pending"
   });
 
-  const userContact = await fetchUserContactFromAuth(appointment.patientId);
-
-  if (!userContact?.email) {
-    throw new ServiceError(400, "Valid user email is required to send OTP for card payments");
-  }
-
-  const otpCode = generateOtpCode();
-  const expiryMs = Math.max(1, env.paymentOtpExpiryMinutes) * 60 * 1000;
-
-  payment.otpCodeHash = hashOtp({
-    otp: otpCode,
-    paymentId: payment._id.toString()
-  });
-  payment.otpExpiresAt = new Date(Date.now() + expiryMs);
-  payment.otpVerifiedAt = null;
-  payment.otpAttempts = 0;
-  await payment.save();
-
-  const otpDispatch = await sendPaymentOtpNotification({
-    email: userContact.email,
-    phoneNumber: userContact.phoneNumber,
-    fullName: userContact.fullName,
-    otpCode
-  });
-
   return sendSuccess(res, 201, "Stripe payment intent created successfully", {
     paymentId: payment._id,
     paymentIntentId: intent.id,
     clientSecret: intent.client_secret,
     status: payment.status,
     otpRequired: true,
-    otpExpiresAt: payment.otpExpiresAt,
-    otpSentTo: maskEmail(userContact.email),
-    otpDispatched: otpDispatch.sent,
-    otpDispatchReason: otpDispatch.reason
+    otpExpiresAt: null,
+    otpSentTo: null,
+    otpDispatched: false,
+    otpDispatchReason: "OTP is sent only after you click Send OTP"
+  });
+});
+
+const sendStripeOtp = withErrorHandling(async (req, res) => {
+  const paymentId = String(req.body.paymentId || "").trim();
+  const payment = await Payment.findById(paymentId).select("+otpCodeHash");
+
+  if (!payment) {
+    throw new ServiceError(404, "Payment not found");
+  }
+
+  ensurePaymentAccess(payment, req.user);
+
+  if (payment.paymentMethod !== "stripe_card") {
+    throw new ServiceError(400, "OTP dispatch is available only for stripe_card payments");
+  }
+
+  if (String(payment.status || "").toLowerCase() !== "pending") {
+    throw new ServiceError(400, "OTP can only be sent for pending stripe_card payments");
+  }
+
+  const userContact = await fetchUserContactFromAuth(payment.patientId);
+  const otpInfo = await issueOtpForStripePayment({ payment, userContact });
+
+  return sendSuccess(res, 200, "Payment OTP dispatched", {
+    paymentId: payment._id,
+    otpRequired: true,
+    otpExpiresAt: otpInfo.otpExpiresAt,
+    otpSentTo: otpInfo.otpMaskedDestination,
+    otpDispatched: otpInfo.otpDispatch.sent,
+    otpDispatchReason: otpInfo.otpDispatch.reason
   });
 });
 
@@ -589,6 +660,7 @@ const verifyStripePayment = withErrorHandling(async (req, res) => {
   const paymentId = String(req.body.paymentId || "").trim();
   const paymentIntentId = String(req.body.paymentIntentId || "").trim();
   const demoSuccess = req.body.demoSuccess === true || String(req.body.demoSuccess || "").toLowerCase() === "true";
+  const requestedCardType = String(req.body.cardType || "").trim().toLowerCase();
 
   let payment;
 
@@ -614,7 +686,11 @@ const verifyStripePayment = withErrorHandling(async (req, res) => {
       throw new ServiceError(400, "demoSuccess verification is not allowed in production");
     }
 
-    const intent = await confirmPaymentIntentForDemo(payment.stripePaymentIntentId);
+    if (requestedCardType && !ALLOWED_CARD_BRANDS.has(requestedCardType)) {
+      throw new ServiceError(400, "Only Visa or Mastercard card payments are allowed");
+    }
+
+    const intent = await confirmPaymentIntentForDemo(payment.stripePaymentIntentId, requestedCardType || "visa");
     const expectedMinorAmount = toMinorUnits(payment.amount);
 
     if (Number(intent.amount) !== Number(expectedMinorAmount)) {
@@ -633,6 +709,32 @@ const verifyStripePayment = withErrorHandling(async (req, res) => {
     applyPaymentStatus(payment, mappedStatus);
     await payment.save();
 
+    if (mappedStatus === "succeeded") {
+      const notificationPayload = await resolveNotificationContacts({
+        payment,
+        payload: {
+          to: req.body.to,
+          toPhone: req.body.toPhone,
+          patientEmail: req.body.patientEmail,
+          patientPhone: req.body.patientPhone,
+          doctorEmail: req.body.doctorEmail,
+          doctorPhone: req.body.doctorPhone,
+          patientName: req.body.patientName,
+          doctorName: req.body.doctorName,
+          amount: String(payment.amount),
+          paymentId: payment._id.toString(),
+          appointmentId: payment.appointmentId,
+          message: req.body.message || ""
+        }
+      });
+
+      await notifyNotificationService({
+        endpoint: "/api/notifications/payment-success",
+        payload: notificationPayload,
+        authHeader: req.headers.authorization
+      });
+    }
+
     return sendSuccess(res, 200, "Demo payment verified", {
       paymentId: payment._id,
       status: payment.status,
@@ -642,7 +744,6 @@ const verifyStripePayment = withErrorHandling(async (req, res) => {
     });
   }
 
-  const intent = await retrievePaymentIntent(payment.stripePaymentIntentId);
   await ensureOtpVerifiedForStripePayment({
     payment,
     otp: req.body.otp
@@ -1021,6 +1122,7 @@ const createPaymentRequest = withErrorHandling(async (req, res) => {
 module.exports = {
   createPaymentRequest,
   createIntent,
+  sendStripeOtp,
   verifyStripeOtp,
   verifyStripePayment,
   handleStripeWebhook,

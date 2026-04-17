@@ -1,8 +1,9 @@
 const express = require("express");
 const { body, param } = require("express-validator");
 const patientController = require("../controllers/patientController");
-const { protect, optionalProtect } = require("../middlewares/authMiddleware");
+const { protect } = require("../middlewares/authMiddleware");
 const { authorize } = require("../middlewares/roleMiddleware");
+const internalServiceAuth = require("../middlewares/internalServiceAuth");
 const validateRequest = require("../middlewares/validateRequest");
 const { upload } = require("../middlewares/uploadMiddleware");
 
@@ -10,7 +11,28 @@ const router = express.Router();
 
 router.post(
   "/register",
-  optionalProtect,
+  protect,
+  authorize("patient", "admin"),
+  [
+    body("userId").notEmpty().withMessage("userId is required").isString(),
+    body("fullName")
+      .notEmpty()
+      .withMessage("fullName is required")
+      .isLength({ min: 3, max: 140 })
+      .withMessage("fullName must be between 3 and 140 characters"),
+    body("dob").optional().isISO8601().withMessage("dob must be a valid date"),
+    body("gender").optional().isIn(["male", "female", "other", "prefer_not_to_say"]),
+    body("phone").optional().isString(),
+    body("address").optional().isString(),
+    body("bloodGroup").optional().isIn(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "UNKNOWN"]),
+    validateRequest
+  ],
+  patientController.registerPatient
+);
+
+router.post(
+  "/internal/register",
+  internalServiceAuth,
   [
     body("userId").notEmpty().withMessage("userId is required").isString(),
     body("fullName")

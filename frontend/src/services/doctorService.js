@@ -50,6 +50,11 @@ export const createPrescription = async (payload) => {
 	return extractData(response);
 };
 
+export const getPatientReports = async (patientId) => {
+	const response = await doctorApi.get(`/patient-reports/${patientId}`);
+	return extractData(response);
+};
+
 export const verifyDoctor = async (doctorId, verified = true) => {
 	const response = await doctorApi.patch(`/${doctorId}/verify`, { verified });
 	return extractData(response);

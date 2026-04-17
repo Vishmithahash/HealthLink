@@ -12,7 +12,7 @@ const recipientSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["sent", "failed"],
+      enum: ["sent", "failed", "skipped"],
       required: true
     },
     error: {

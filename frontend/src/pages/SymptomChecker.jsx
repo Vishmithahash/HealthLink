@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Bot, LoaderCircle, ShieldAlert, Stethoscope } from "lucide-react";
-import { analyzeSymptoms, getSymptomHistory } from "../services/aiService";
+import { createPortal } from "react-dom";
+import { Activity, AlertTriangle, Bot, LoaderCircle, ShieldAlert, Stethoscope, X } from "lucide-react";
+import { analyzeSymptoms, getSymptomHistory, getSymptomRecordById } from "../services/aiService";
 import { extractErrorMessage } from "../services/api";
 
 const genders = ["male", "female", "other", "prefer_not_to_say"];
@@ -17,6 +18,13 @@ const urgencyClassName = (urgency) => {
     return "bg-emerald-100 text-emerald-800 border border-emerald-200";
 };
 
+const prettyValue = (value, fallback = "Not provided") => {
+    if (value === null || value === undefined || value === "") {
+        return fallback;
+    }
+    return String(value);
+};
+
 const SymptomChecker = () => {
     const [form, setForm] = useState({
         symptoms: "",
@@ -29,6 +37,10 @@ const SymptomChecker = () => {
     const [analysis, setAnalysis] = useState(null);
     const [historyItems, setHistoryItems] = useState([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
+    const [selectedHistoryRecord, setSelectedHistoryRecord] = useState(null);
+    const [historyModalOpen, setHistoryModalOpen] = useState(false);
+    const [loadingHistoryDetail, setLoadingHistoryDetail] = useState(false);
+    const [historyDetailError, setHistoryDetailError] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
 
@@ -54,6 +66,19 @@ const SymptomChecker = () => {
     useEffect(() => {
         loadHistory();
     }, []);
+
+    useEffect(() => {
+        if (!historyModalOpen) {
+            return;
+        }
+
+        const previous = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+
+        return () => {
+            document.body.style.overflow = previous;
+        };
+    }, [historyModalOpen]);
 
     const onChangeField = (key, value) => {
         setForm((prev) => ({ ...prev, [key]: value }));
@@ -114,12 +139,38 @@ const SymptomChecker = () => {
         }
     };
 
+    const closeHistoryModal = () => {
+        setHistoryModalOpen(false);
+        setHistoryDetailError("");
+        setSelectedHistoryRecord(null);
+    };
+
+    const openHistoryModal = async (item) => {
+        if (!item?._id) {
+            return;
+        }
+
+        setHistoryModalOpen(true);
+        setHistoryDetailError("");
+        setSelectedHistoryRecord(item);
+        setLoadingHistoryDetail(true);
+
+        try {
+            const record = await getSymptomRecordById(item._id);
+            setSelectedHistoryRecord(record || item);
+        } catch (err) {
+            setSelectedHistoryRecord(item);
+            setHistoryDetailError(extractErrorMessage(err, "Could not load full details for this symptom analysis."));
+        } finally {
+            setLoadingHistoryDetail(false);
+        }
+    };
+
     return (
         <div className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                <div className="bg-slate-900 px-5 py-4 text-white">
+                <div className="bg-slate-900 px-5 py-4 text-white flex items-center justify-center text-center">
                     <h3 className="text-lg font-semibold inline-flex items-center gap-2"><Bot className="h-5 w-5 text-cyan-300" /> AI Symptom Checker</h3>
-                    <p className="text-xs text-slate-300 mt-1">Connected to ai-service at /api/ai with backend validation and role-based access.</p>
                 </div>
 
                 <form onSubmit={handleAnalyze} className="p-5 space-y-4 bg-slate-50">
@@ -216,38 +267,184 @@ const SymptomChecker = () => {
             {analysis ? (
                 <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-5 space-y-3">
                     <h4 className="text-base font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-4 w-4 text-cyan-700" /> Latest Analysis</h4>
-                    <div>
-                        <span className={`text-xs px-2 py-1 rounded-full ${urgencyClassName(analysis.urgency)}`}>
-                            Urgency: {analysis.urgency || "medium"}
-                        </span>
+                    <div className="rounded-xl border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-teal-50 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <p className="text-xs uppercase tracking-wide text-cyan-700 font-semibold">AI Response</p>
+                                <p className="text-sm text-slate-700 mt-1">Suggested specialty: <span className="font-semibold text-slate-900">{analysis.recommendedSpecialty || "General Physician (General Practitioner)"}</span></p>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded-full h-fit ${urgencyClassName(analysis.urgency)}`}>
+                                Urgency: {analysis.urgency || "medium"}
+                            </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                            <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                <p className="text-xs text-slate-500 uppercase tracking-wide">Possible Concerns</p>
+                                {(analysis.possibleConcerns || []).length > 0 ? (
+                                    <ul className="mt-2 list-disc pl-5 space-y-1">
+                                        {(analysis.possibleConcerns || []).map((concern, index) => (
+                                            <li key={`${concern}-${index}`} className="text-sm text-slate-700 leading-6">{concern}</li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-sm text-slate-600 mt-2">No specific concerns returned.</p>
+                                )}
+                            </div>
+
+                            <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                <p className="text-xs text-slate-500 uppercase tracking-wide">Advice</p>
+                                <p className="text-sm text-slate-700 mt-2 leading-relaxed">{analysis.advice || "No advice returned"}</p>
+                            </div>
+                        </div>
+
+                        <p className="text-xs text-slate-500 inline-flex items-start gap-1 mt-3"><ShieldAlert className="h-3.5 w-3.5 mt-0.5" /> {analysis.disclaimer || "This is not a medical diagnosis. Seek professional medical advice."}</p>
                     </div>
-                    <p className="text-sm text-slate-700"><span className="font-medium">Possible concerns:</span> {(analysis.possibleConcerns || []).join(", ") || "No specific concerns returned"}</p>
-                    <p className="text-sm text-slate-700"><span className="font-medium">Recommended specialty:</span> {analysis.recommendedSpecialty || "General Physician (General Practitioner)"}</p>
-                    <p className="text-sm text-slate-700"><span className="font-medium">Advice:</span> {analysis.advice || "No advice returned"}</p>
-                    <p className="text-xs text-slate-500 inline-flex items-start gap-1"><ShieldAlert className="h-3.5 w-3.5 mt-0.5" /> {analysis.disclaimer || "This is not a medical diagnosis. Seek professional medical advice."}</p>
                 </div>
             ) : null}
 
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-5">
-                <h4 className="text-base font-semibold text-slate-900">Recent Symptom Analysis History</h4>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h4 className="text-base font-semibold text-slate-900">Recent Symptom Analysis History</h4>
+                        <p className="text-xs text-slate-500 mt-1">Click any entry to open complete patient inputs and AI details.</p>
+                    </div>
+                    <span className="text-xs font-medium rounded-full px-2.5 py-1 bg-slate-100 text-slate-700">
+                        {historyItems.length} recent records
+                    </span>
+                </div>
                 {loadingHistory ? (
                     <p className="text-sm text-slate-600 mt-2 inline-flex items-center gap-2"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading history...</p>
                 ) : (
-                    <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                    <ul className="mt-4 space-y-3 text-sm text-slate-700">
                         {historyItems.length === 0 ? (
-                            <li className="text-slate-500">No past analyses yet.</li>
+                            <li className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-slate-500 text-center">No past analyses yet.</li>
                         ) : (
-                            historyItems.map((item) => (
-                                <li key={item._id} className="border border-slate-200 rounded-md p-3 bg-slate-50">
-                                    <p className="font-medium">{item.symptoms}</p>
-                                    <p className="text-xs text-slate-600 mt-1">Urgency: {item.urgency || "medium"} | Specialty: {item.recommendedSpecialty || "N/A"}</p>
-                                    <p className="text-xs text-slate-500 mt-1">{new Date(item.createdAt).toLocaleString()}</p>
+                            historyItems.map((item, index) => (
+                                <li key={item._id}>
+                                    <button
+                                        type="button"
+                                        onClick={() => openHistoryModal(item)}
+                                        className="w-full text-left rounded-xl border border-slate-200 p-4 bg-gradient-to-r from-slate-50 to-white hover:from-cyan-50 hover:to-white hover:border-cyan-300 transition shadow-sm hover:shadow"
+                                    >
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div className="flex items-center gap-2">
+                                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-100 text-cyan-800 text-xs font-semibold">
+                                                    {index + 1}
+                                                </span>
+                                                <span className={`text-xs px-2 py-1 rounded-full ${urgencyClassName(item.urgency)}`}>
+                                                    Urgency: {item.urgency || "medium"}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-slate-500">{new Date(item.createdAt).toLocaleString()}</p>
+                                        </div>
+
+                                        <p className="font-medium text-slate-900 mt-2 line-clamp-2">{item.symptoms}</p>
+
+                                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                                            <span className="text-xs rounded-full px-2 py-1 bg-slate-100 text-slate-700">
+                                                Specialty: {item.recommendedSpecialty || "N/A"}
+                                            </span>
+                                            <span className="text-xs rounded-full px-2 py-1 bg-cyan-50 text-cyan-700 border border-cyan-100">
+                                                View details
+                                            </span>
+                                        </div>
+                                    </button>
                                 </li>
                             ))
                         )}
                     </ul>
                 )}
             </div>
+
+            {historyModalOpen ? createPortal(
+                <div
+                    className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[1px] overflow-y-auto p-4"
+                    onClick={closeHistoryModal}
+                >
+                    <div
+                        className="w-full max-w-2xl my-8 mx-auto rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-4 bg-slate-50">
+                            <div>
+                                <h4 className="text-base font-semibold text-slate-900">Symptom Analysis Details</h4>
+                                <p className="text-xs text-slate-600 mt-1">Complete patient input and AI recommendation details.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={closeHistoryModal}
+                                className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+                            >
+                                <X className="h-4 w-4" />
+                                Close
+                            </button>
+                        </div>
+
+                        <div className="p-5 space-y-4">
+                            {loadingHistoryDetail ? (
+                                <p className="text-sm text-slate-600 inline-flex items-center gap-2"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading full record...</p>
+                            ) : null}
+
+                            {historyDetailError ? (
+                                <p className="text-sm text-amber-700 inline-flex items-center gap-1"><AlertTriangle className="h-4 w-4" /> {historyDetailError}</p>
+                            ) : null}
+
+                            {selectedHistoryRecord ? (
+                                <>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+                                            <p className="text-xs uppercase tracking-wide text-slate-500">Patient Input</p>
+                                            <p className="text-sm text-slate-700 mt-2"><span className="font-medium">Symptoms:</span> {prettyValue(selectedHistoryRecord.symptoms)}</p>
+                                            <p className="text-sm text-slate-700 mt-1"><span className="font-medium">Age:</span> {prettyValue(selectedHistoryRecord.age)}</p>
+                                            <p className="text-sm text-slate-700 mt-1"><span className="font-medium">Gender:</span> {prettyValue(selectedHistoryRecord.gender)}</p>
+                                            <p className="text-sm text-slate-700 mt-1"><span className="font-medium">Duration:</span> {prettyValue(selectedHistoryRecord.duration)}</p>
+                                            <p className="text-sm text-slate-700 mt-1"><span className="font-medium">Severity:</span> {prettyValue(selectedHistoryRecord.severity)}</p>
+                                            <p className="text-sm text-slate-700 mt-1"><span className="font-medium">Notes:</span> {prettyValue(selectedHistoryRecord.notes)}</p>
+                                        </div>
+
+                                        <div className="rounded-lg border border-slate-200 p-3 bg-cyan-50/50">
+                                            <p className="text-xs uppercase tracking-wide text-slate-500">AI Recommendation</p>
+                                            <p className="text-sm text-slate-700 mt-2"><span className="font-medium">Recommended Specialty:</span> {prettyValue(selectedHistoryRecord.recommendedSpecialty, "N/A")}</p>
+                                            <p className="text-sm text-slate-700 mt-1"><span className="font-medium">Urgency:</span> <span className={`text-xs px-2 py-1 rounded-full ${urgencyClassName(selectedHistoryRecord.urgency)}`}>{prettyValue(selectedHistoryRecord.urgency, "medium")}</span></p>
+                                            <p className="text-sm text-slate-700 mt-1"><span className="font-medium">Advice:</span> {prettyValue(selectedHistoryRecord.advice, "No advice available")}</p>
+                                            <div className="mt-2">
+                                                <p className="text-sm font-medium text-slate-700">Possible Concerns:</p>
+                                                {(selectedHistoryRecord.possibleConcerns || []).length > 0 ? (
+                                                    <ul className="mt-1 list-disc pl-5 space-y-1">
+                                                        {(selectedHistoryRecord.possibleConcerns || []).map((concern, index) => (
+                                                            <li key={`${concern}-${index}`} className="text-sm text-slate-700 leading-6">{concern}</li>
+                                                        ))}
+                                                    </ul>
+                                                ) : (
+                                                    <p className="text-sm text-slate-600 mt-1">No concerns listed.</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-xs text-slate-500 inline-flex items-start gap-1"><ShieldAlert className="h-3.5 w-3.5 mt-0.5" /> {selectedHistoryRecord.disclaimer || "This is not a medical diagnosis. Seek professional medical advice."}</p>
+                                    <p className="text-xs text-slate-500">Created at: {selectedHistoryRecord.createdAt ? new Date(selectedHistoryRecord.createdAt).toLocaleString() : "N/A"}</p>
+                                </>
+                            ) : loadingHistoryDetail ? null : (
+                                <p className="text-sm text-slate-600">No symptom detail found for this record.</p>
+                            )}
+
+                            <div className="pt-1">
+                                <button
+                                    type="button"
+                                    onClick={closeHistoryModal}
+                                    className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-900"
+                                >
+                                    <X className="h-4 w-4" />
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                , document.body
+            ) : null}
         </div>
     );
 };

@@ -71,18 +71,18 @@ const getBrandLabel = (type) => {
     return "CARD";
 };
 
-const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess, onCancel }) => {
+const PaymentForm = ({ amount, currency = "LKR", clientSecret, otpMeta, onSendOtp, onPaymentSuccess, onCancel }) => {
     const [cardHolder, setCardHolder] = useState("");
     const [cardNumber, setCardNumber] = useState("");
     const [expiry, setExpiry] = useState("");
     const [cvv, setCvv] = useState("");
     const [saveCard, setSaveCard] = useState(false);
-    const [generatedOtp, setGeneratedOtp] = useState("");
     const [otpCode, setOtpCode] = useState("");
     const [otpSent, setOtpSent] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [error, setError] = useState("");
     const [savedCards, setSavedCards] = useState([]);
+    const [selectedCardType, setSelectedCardType] = useState("visa");
 
     useEffect(() => {
         try {
@@ -93,7 +93,8 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
         }
     }, []);
 
-    const cardType = useMemo(() => detectCardType(cardNumber), [cardNumber]);
+    const detectedCardType = useMemo(() => detectCardType(cardNumber), [cardNumber]);
+    const cardType = detectedCardType === "unknown" ? selectedCardType : detectedCardType;
 
     const validateCardFields = () => {
         const trimmedHolder = String(cardHolder || "").trim();
@@ -117,8 +118,12 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
             return "Invalid card number. Use a valid Visa/Mastercard number (for testing: 4242 4242 4242 4242 or 5555 5555 5555 4444).";
         }
 
-        if (cardType === "unknown") {
+        if (detectedCardType === "unknown") {
             return "Only Visa and Mastercard are supported in this demo.";
+        }
+
+        if (detectedCardType !== selectedCardType) {
+            return `Selected method is ${getBrandLabel(selectedCardType)}. Please enter a matching ${getBrandLabel(selectedCardType)} card.`;
         }
 
         if (expiryDigits.length !== 4) {
@@ -164,7 +169,7 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextCards));
     };
 
-    const sendOtp = (event) => {
+    const sendOtp = async (event) => {
         event.preventDefault();
         setError("");
 
@@ -174,17 +179,31 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
             return;
         }
 
-        setGeneratedOtp("123456");
-        setOtpCode("");
-        setOtpSent(true);
+        if (typeof onSendOtp !== "function") {
+            setError("OTP dispatch handler is unavailable. Please reinitialize payment.");
+            return;
+        }
+
+        setProcessing(true);
+        try {
+            await onSendOtp({ cardType: selectedCardType });
+            setOtpCode("");
+            setOtpSent(true);
+        } catch (dispatchError) {
+            setError(dispatchError?.message || "Could not send OTP. Please try again.");
+        } finally {
+            setProcessing(false);
+        }
     };
 
     const confirmOtp = async (event) => {
         event.preventDefault();
         setError("");
 
-        if (String(otpCode).trim() !== generatedOtp) {
-            setError("Invalid OTP. For demo, use 123456.");
+        const normalizedOtp = String(otpCode || "").trim();
+
+        if (!/^\d{6}$/.test(normalizedOtp)) {
+            setError("Please enter a valid 6-digit OTP.");
             return;
         }
 
@@ -193,9 +212,7 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
             persistCardIfNeeded();
 
             await onPaymentSuccess({
-                id: `demo_pi_${Date.now()}`,
-                status: "succeeded",
-                demo: true,
+                otp: normalizedOtp,
                 cardType,
                 cardLast4: onlyDigits(cardNumber).slice(-4),
                 savedCard: saveCard
@@ -255,6 +272,25 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
                                     placeholder="John Doe"
                                     className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
                                 />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-sm text-slate-700">Card Type</label>
+                                <div className="mt-1 inline-flex rounded-lg border border-slate-200 p-1 bg-slate-50">
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedCardType("visa")}
+                                        className={`px-3 py-1.5 text-sm rounded-md ${selectedCardType === "visa" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+                                    >
+                                        Visa
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedCardType("mastercard")}
+                                        className={`px-3 py-1.5 text-sm rounded-md ${selectedCardType === "mastercard" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+                                    >
+                                        Mastercard
+                                    </button>
+                                </div>
                             </div>
                             <div className="md:col-span-2">
                                 <label className="block text-sm text-slate-700">Card Number</label>
@@ -317,15 +353,20 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
 
                         <button
                             type="submit"
+                            disabled={processing}
                             className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-white bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 transition-colors"
                         >
-                            Send OTP to Complete {currency} {Number(amount || 0).toFixed(2)}
+                            {processing
+                                ? "Sending OTP..."
+                                : `Send OTP (${currency} ${Number(amount || 0).toFixed(2)})`}
                         </button>
                     </>
                 ) : (
                     <>
                         <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
-                            Dummy OTP sent. Use <span className="font-semibold">123456</span> for now.
+                            {otpMeta?.dispatched === false
+                                ? `OTP dispatch failed: ${otpMeta?.reason || "Unknown error"}. Please reinitialize payment.`
+                                : `OTP sent${otpMeta?.sentTo ? ` to ${otpMeta.sentTo}` : ""}. Enter the 6-digit code to continue.`}
                         </div>
                         <div>
                             <label className="block text-sm text-slate-700">Enter OTP</label>
@@ -353,7 +394,6 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, onPaymentSuccess,
                                 onClick={() => {
                                     setOtpSent(false);
                                     setOtpCode("");
-                                    setGeneratedOtp("");
                                     setError("");
                                 }}
                                 className="py-3 px-4 border border-slate-300 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50"

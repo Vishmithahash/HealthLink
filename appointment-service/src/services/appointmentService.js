@@ -100,6 +100,168 @@ const assertPatientAccountCanBook = async ({ patientId, headers, user }) => {
 
 const hasOverlap = (leftStart, leftEnd, rightStart, rightEnd) => leftStart < rightEnd && leftEnd > rightStart;
 
+const parseTimeToMinutes = (value) => {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]) * 60 + Number(match[2]);
+};
+
+const WEEKDAY_TO_INDEX = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6
+};
+
+const getZonedDateParts = (date, timeZone) => {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+
+  const parts = formatter.formatToParts(date);
+  const weekdayToken = parts.find((part) => part.type === "weekday")?.value;
+  const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value || 0);
+
+  return {
+    weekday: WEEKDAY_TO_INDEX[weekdayToken] ?? date.getUTCDay(),
+    minutes: hour * 60 + minute
+  };
+};
+
+const fetchDoctorScheduleProfile = async ({ doctorId, headers }) => {
+  try {
+    const response = await httpClient.get(`${env.doctorServiceUrl}/api/doctors/${encodeURIComponent(doctorId)}`, {
+      headers
+    });
+    return extractData(response);
+  } catch (error) {
+    if (env.allowDoctorFallback) {
+      return null;
+    }
+
+    throw new ServiceError(502, "Unable to fetch doctor schedule", {
+      reason: error?.response?.data?.message || error.message
+    });
+  }
+};
+
+const evaluateDoctorSchedule = ({ doctorProfile, scheduledAt, durationMinutes }) => {
+  if (!doctorProfile) {
+    return {
+      available: env.allowDoctorFallback,
+      reason: "Doctor schedule is unavailable"
+    };
+  }
+
+  const requestedStart = parseDate(scheduledAt, "scheduledAt");
+  const requestedEnd = new Date(requestedStart.getTime() + durationMinutes * 60000);
+
+  const unavailablePeriods = Array.isArray(doctorProfile.unavailablePeriods)
+    ? doctorProfile.unavailablePeriods
+    : [];
+
+  const blockedByUnavailablePeriod = unavailablePeriods.some((period) => {
+    const from = new Date(period.from);
+    const to = new Date(period.to);
+
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return false;
+    }
+
+    return hasOverlap(requestedStart, requestedEnd, from, to);
+  });
+
+  if (blockedByUnavailablePeriod) {
+    return {
+      available: false,
+      reason: "Doctor is unavailable during the selected period"
+    };
+  }
+
+  const slots = Array.isArray(doctorProfile.availabilitySlots) ? doctorProfile.availabilitySlots : [];
+  const absoluteSlots = slots.filter((slot) => slot?.startAt && slot?.endAt);
+  const weeklySlots = slots.filter((slot) => slot?.dayOfWeek != null && slot?.startTime && slot?.endTime);
+
+  if (absoluteSlots.length > 0) {
+    const matchesAbsoluteSlot = absoluteSlots.some((slot) => {
+      const startAt = new Date(slot.startAt);
+      const endAt = new Date(slot.endAt);
+      if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+        return false;
+      }
+      return startAt <= requestedStart && endAt >= requestedEnd;
+    });
+
+    if (!matchesAbsoluteSlot) {
+      return {
+        available: false,
+        reason: "Selected time does not match the doctor's available slots"
+      };
+    }
+  }
+
+  const timeZone = String(doctorProfile?.workingHours?.timezone || "Asia/Colombo");
+  const startParts = getZonedDateParts(requestedStart, timeZone);
+  const endParts = getZonedDateParts(requestedEnd, timeZone);
+
+  if (startParts.weekday !== endParts.weekday) {
+    return {
+      available: false,
+      reason: "Selected time spans across multiple days in doctor's timezone"
+    };
+  }
+
+  const startMinutes = startParts.minutes;
+  const endMinutes = endParts.minutes;
+
+  if (weeklySlots.length > 0) {
+    const matchesWeeklySlot = weeklySlots.some((slot) => {
+      const slotDay = Number(slot.dayOfWeek);
+      const slotStart = parseTimeToMinutes(slot.startTime);
+      const slotEnd = parseTimeToMinutes(slot.endTime);
+
+      if (!Number.isInteger(slotDay) || slotStart == null || slotEnd == null) {
+        return false;
+      }
+
+      return slotDay === startParts.weekday && startMinutes >= slotStart && endMinutes <= slotEnd;
+    });
+
+    if (!matchesWeeklySlot) {
+      return {
+        available: false,
+        reason: "Selected time is outside doctor's weekly availability slots"
+      };
+    }
+  }
+
+  const hasExplicitSlots = absoluteSlots.length > 0 || weeklySlots.length > 0;
+  if (!hasExplicitSlots) {
+    const workStart = parseTimeToMinutes(doctorProfile?.workingHours?.start || "09:00");
+    const workEnd = parseTimeToMinutes(doctorProfile?.workingHours?.end || "17:00");
+
+    if (workStart != null && workEnd != null && (startMinutes < workStart || endMinutes > workEnd)) {
+      return {
+        available: false,
+        reason: "Selected time is outside doctor's working hours"
+      };
+    }
+  }
+
+  return { available: true, reason: "" };
+};
+
 // CORE: Check for existing appointment conflicts
 const hasDoctorAppointmentConflict = async ({ doctorId, scheduledAt, durationMinutes, excludeAppointmentId }) => {
   const requestedStart = parseDate(scheduledAt, "scheduledAt");
@@ -126,24 +288,12 @@ const hasDoctorAppointmentConflict = async ({ doctorId, scheduledAt, durationMin
 
 // CORE: Check against local doctor availability slots
 const isWithinDoctorAvailability = async ({ doctorId, scheduledAt, durationMinutes }) => {
-  const requestedStart = parseDate(scheduledAt, "scheduledAt");
-  const requestedEnd = new Date(requestedStart.getTime() + durationMinutes * 60000);
-
-  // If no availability is defined at all, we treat it as "unmanaged" (available) 
-  // ONLY IF env.allowDoctorFallback is true. Otherwise, we require explicit slots.
-  const anyAvailabilityDefined = await DoctorAvailability.exists({ doctorId });
-
-  if (!anyAvailabilityDefined) {
-    return env.allowDoctorFallback; 
-  }
-
-  const matchingSlot = await DoctorAvailability.findOne({
+  const doctorProfile = await fetchDoctorScheduleProfile({
     doctorId,
-    startAt: { $lte: requestedStart },
-    endAt: { $gte: requestedEnd }
+    headers: {}
   });
 
-  return Boolean(matchingSlot);
+  return evaluateDoctorSchedule({ doctorProfile, scheduledAt, durationMinutes });
 };
 
 const assertDoctorSlotAvailable = async ({ doctorId, scheduledAt, durationMinutes, excludeAppointmentId }) => {
@@ -166,8 +316,8 @@ const assertDoctorSlotAvailable = async ({ doctorId, scheduledAt, durationMinute
     durationMinutes
   });
 
-  if (!withinAvailability) {
-    throw new ServiceError(409, "Unavailable: Requested time is outside doctor's set availability");
+  if (!withinAvailability.available) {
+    throw new ServiceError(409, withinAvailability.reason || "Unavailable: Requested time is outside doctor's set availability");
   }
 };
 
@@ -312,9 +462,30 @@ const searchDoctors = async ({ specialty, name, availability, headers }) => {
       params: { specialty, name, availability },
       headers
     });
-    return response.data;
+
+    const doctorList = Array.isArray(response?.data?.data)
+      ? response.data.data
+      : Array.isArray(response?.data)
+        ? response.data
+        : [];
+
+    if (!availability) {
+      return doctorList;
+    }
+
+    const availabilityDate = parseDate(availability, "availability");
+
+    return doctorList.filter((doctor) => {
+      const check = evaluateDoctorSchedule({
+        doctorProfile: doctor,
+        scheduledAt: availabilityDate,
+        durationMinutes: 30
+      });
+
+      return check.available;
+    });
   } catch (error) {
-    if (env.allowDoctorFallback) return { success: true, data: [] };
+    if (env.allowDoctorFallback) return [];
     throw new ServiceError(502, "Unable to search doctors", { reason: error.message });
   }
 };

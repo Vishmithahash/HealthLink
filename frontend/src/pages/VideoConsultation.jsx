@@ -11,6 +11,61 @@ import {
     startTelemedicineSession
 } from '../services/telemedicineService';
 import { getUserInfo } from '../utils/auth';
+import { getPatientById } from '../services/patientService';
+
+const formatRemainingTime = (milliseconds) => {
+    const totalMinutes = Math.max(1, Math.ceil(milliseconds / 60000));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (hours > 0) {
+        return `${hours}h ${minutes}m`;
+    }
+
+    return `${minutes}m`;
+};
+
+const getConsultationJoinAvailability = (appointment) => {
+    const status = String(appointment?.status || '').toLowerCase();
+    if (!status || !['confirmed', 'completed'].includes(status)) {
+        return {
+            canJoin: false,
+            message: `Consultation is not joinable while appointment status is ${status || 'unknown'}.`
+        };
+    }
+
+    const scheduledAt = appointment?.scheduledAt ? new Date(appointment.scheduledAt) : null;
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+        return {
+            canJoin: false,
+            message: 'Consultation start time is unavailable for this appointment.'
+        };
+    }
+
+    const durationMinutes = Math.max(1, Number(appointment?.durationMinutes || 30));
+    const windowEnd = new Date(scheduledAt.getTime() + durationMinutes * 60000);
+    const now = new Date();
+
+    if (now < scheduledAt) {
+        const remaining = formatRemainingTime(scheduledAt.getTime() - now.getTime());
+        return {
+            canJoin: false,
+            message: `Consultation has not started yet. Starts in ${remaining} (${scheduledAt.toLocaleString()}).`
+        };
+    }
+
+    if (now > windowEnd) {
+        return {
+            canJoin: false,
+            message: `Consultation window ended at ${windowEnd.toLocaleString()}.`
+        };
+    }
+
+    return {
+        canJoin: true,
+        message: ''
+    };
+};
 
 const VideoConsultation = () => {
     const { id } = useParams();
@@ -20,6 +75,7 @@ const VideoConsultation = () => {
     const [ending, setEnding] = useState(false);
     const [error, setError] = useState('');
     const [session, setSession] = useState(null);
+    const [patientContact, setPatientContact] = useState(null);
 
     const appointmentId = id;
 
@@ -47,6 +103,16 @@ const VideoConsultation = () => {
 
         try {
             let resolvedSession;
+            const appointment = await getAppointmentById(appointmentId).catch(() => null);
+
+            if (!appointment) {
+                throw new Error('Appointment details are unavailable for this consultation.');
+            }
+
+            const joinAvailability = getConsultationJoinAvailability(appointment);
+            if (!joinAvailability.canJoin) {
+                throw new Error(joinAvailability.message || 'Consultation cannot be joined at this time.');
+            }
 
             try {
                 resolvedSession = await getSessionByAppointment(appointmentId);
@@ -55,12 +121,16 @@ const VideoConsultation = () => {
                     throw sessionError;
                 }
 
-                const appointment = await getAppointmentById(appointmentId);
                 resolvedSession = await createSession({
                     appointmentId,
                     patientId: appointment?.patientId,
                     doctorId: appointment?.doctorId
                 });
+            }
+
+            if (appointment?.patientId) {
+                const patient = await getPatientById(appointment.patientId).catch(() => null);
+                setPatientContact(patient || null);
             }
 
             if (resolvedSession?._id && resolvedSession.status !== 'completed') {
@@ -94,7 +164,15 @@ const VideoConsultation = () => {
         setError('');
 
         try {
-            await endTelemedicineSession(session._id);
+            await endTelemedicineSession(session._id, {
+                appointmentId,
+                patientName: patientContact?.fullName || undefined,
+                doctorName: user?.fullName || undefined,
+                patientPhone: patientContact?.phone || undefined,
+                doctorPhone: user?.phoneNumber || undefined,
+                doctorEmail: user?.email || undefined,
+                message: 'Your telemedicine consultation has been completed.'
+            });
             navigate(-1);
         } catch (err) {
             setError(extractErrorMessage(err, 'Could not end consultation'));
