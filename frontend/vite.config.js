@@ -20,6 +20,11 @@ export default defineConfig({
         target: "http://localhost:4001",
         changeOrigin: true
       },
+      "/socket.io": {
+        target: "http://localhost:4001",
+        changeOrigin: true,
+        ws: true
+      },
       "/api/doctors": {
         target: "http://localhost:4002",
         changeOrigin: true

@@ -14,6 +14,7 @@ class ServiceError extends Error {
 }
 
 const normalizeRole = (role) => String(role || "").trim().toLowerCase();
+const escapeRegexLiteral = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const requestClient = axios.create({
   timeout: env.requestTimeoutMs
@@ -343,11 +344,11 @@ const getAllDoctors = async ({ query, user }) => {
   const filters = {};
 
   if (query.specialization) {
-    filters.specialization = { $regex: query.specialization, $options: "i" };
+    filters.specialization = { $regex: escapeRegexLiteral(query.specialization), $options: "i" };
   }
 
   if (query.name) {
-    filters.fullName = { $regex: query.name, $options: "i" };
+    filters.fullName = { $regex: escapeRegexLiteral(query.name), $options: "i" };
   }
 
   const isAdmin = normalizeRole(user?.role) === "admin";
@@ -389,6 +390,19 @@ const getDoctorById = async ({ id, user }) => {
   }
 
   return normalizeDoctorTimezoneView(doctor);
+};
+
+const getDoctorDocumentById = async ({ id }) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new ServiceError(400, "Invalid doctor id");
+  }
+
+  const doctor = await Doctor.findById(id);
+  if (!doctor) {
+    throw new ServiceError(404, "Doctor not found");
+  }
+
+  return doctor;
 };
 
 const updateAvailability = async ({ user, payload }) => {
@@ -975,7 +989,7 @@ const updateDoctorStatus = async ({ doctorId, status, user }) => {
     throw new ServiceError(400, `status must be one of: ${allowedStatuses.join(", ")}`);
   }
 
-  const doctor = await getDoctorById({ id: doctorId, user });
+  const doctor = await getDoctorDocumentById({ id: doctorId });
   doctor.status = status;
   if (status === "verified") {
     doctor.verified = true;
@@ -990,7 +1004,7 @@ const verifyDoctor = async ({ doctorId, verified, user }) => {
     throw new ServiceError(403, "Only admins can verify doctors");
   }
 
-  const doctor = await getDoctorById({ id: doctorId, user });
+  const doctor = await getDoctorDocumentById({ id: doctorId });
   doctor.verified = Boolean(verified);
 
   if (doctor.verified && doctor.status === "inactive") {

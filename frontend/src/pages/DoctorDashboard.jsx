@@ -20,6 +20,7 @@ import { extractErrorMessage } from "../services/api";
 import { getUserInfo } from "../utils/auth";
 import { getOrCreateTelemedicineSession, startTelemedicineSession } from "../services/telemedicineService";
 import { notifyCustomBestEffort } from "../services/notificationService";
+import { subscribeToAppointmentChanges, watchAppointmentRooms } from "../services/appointmentRealtime";
 
 const defaultSlot = {
   dayOfWeek: 1,
@@ -137,6 +138,7 @@ const DoctorDashboard = () => {
   const [reportLoadingPatientId, setReportLoadingPatientId] = useState("");
   const [selectedPatientForReports, setSelectedPatientForReports] = useState("");
   const [patientReports, setPatientReports] = useState([]);
+  const [recentlyChangedAppointments, setRecentlyChangedAppointments] = useState({});
 
   const appointmentById = useMemo(
     () => Object.fromEntries(appointments.map((item) => [String(item._id), item])),
@@ -146,6 +148,23 @@ const DoctorDashboard = () => {
   const resolvePatientName = (patientId) => {
     const key = String(patientId || "");
     return patientNameById[key] || patientId || "Unknown patient";
+  };
+
+  const markAppointmentAsRecentlyChanged = (appointmentId) => {
+    const normalizedId = String(appointmentId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+
+    setRecentlyChangedAppointments((prev) => ({
+      ...prev,
+      [normalizedId]: Date.now()
+    }));
+  };
+
+  const isAppointmentRecentlyChanged = (appointmentId) => {
+    const changedAt = recentlyChangedAppointments[String(appointmentId || "")];
+    return Number.isFinite(changedAt) && Date.now() - changedAt < 5000;
   };
 
   const loadPatientNames = async (appointmentList) => {
@@ -282,6 +301,40 @@ const DoctorDashboard = () => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = subscribeToAppointmentChanges(async (event) => {
+      const changedAppointmentId = event?.appointment?._id;
+      if (changedAppointmentId) {
+        markAppointmentAsRecentlyChanged(changedAppointmentId);
+      }
+      await loadData();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const cutoff = Date.now() - 5000;
+      setRecentlyChangedAppointments((prev) => {
+        const entries = Object.entries(prev).filter(([, changedAt]) => changedAt >= cutoff);
+        return entries.length === Object.keys(prev).length ? prev : Object.fromEntries(entries);
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!Array.isArray(appointments) || appointments.length === 0) {
+      return;
+    }
+
+    watchAppointmentRooms(appointments);
+  }, [appointments]);
+
   const pendingAppointments = appointments.filter((item) => item.status === "pending");
   const consultationAppointments = appointments.filter((item) => ["confirmed", "completed"].includes(String(item.status || "").toLowerCase()));
   const doctorPayments = useMemo(() => {
@@ -403,6 +456,17 @@ const DoctorDashboard = () => {
 
     try {
       const validSlots = availabilitySlots.filter((slot) => slot.startTime && slot.endTime);
+
+      const hasInvalidSlotRange = validSlots.some((slot) => {
+        const start = Number(String(slot.startTime || "").replace(":", ""));
+        const end = Number(String(slot.endTime || "").replace(":", ""));
+        return Number.isNaN(start) || Number.isNaN(end) || end <= start;
+      });
+
+      if (hasInvalidSlotRange) {
+        throw new Error("Each availability slot must have an end time later than start time.");
+      }
+
       const validUnavailablePeriods = unavailablePeriods
         .filter((period) => period.from && period.to)
         .map((period) => ({
@@ -411,6 +475,16 @@ const DoctorDashboard = () => {
           reason: period.reason || ""
         }))
         .filter((period) => period.from && period.to);
+
+      const hasInvalidUnavailableRange = validUnavailablePeriods.some((period) => {
+        const from = new Date(period.from);
+        const to = new Date(period.to);
+        return Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from;
+      });
+
+      if (hasInvalidUnavailableRange) {
+        throw new Error("Each unavailable period must have a valid end date/time after the start date/time.");
+      }
 
       await updateAvailability({
         availabilitySlots: validSlots,
@@ -583,6 +657,25 @@ const DoctorDashboard = () => {
     setAvailabilitySlots((prev) => [...prev, { ...defaultSlot }]);
   };
 
+  const applyWeekdayTemplate = () => {
+    setAvailabilitySlots([
+      { dayOfWeek: 1, startTime: "09:00", endTime: "17:00", mode: "both" },
+      { dayOfWeek: 2, startTime: "09:00", endTime: "17:00", mode: "both" },
+      { dayOfWeek: 3, startTime: "09:00", endTime: "17:00", mode: "both" },
+      { dayOfWeek: 4, startTime: "09:00", endTime: "17:00", mode: "both" },
+      { dayOfWeek: 5, startTime: "09:00", endTime: "17:00", mode: "both" }
+    ]);
+  };
+
+  const applyDailyTemplate = () => {
+    setAvailabilitySlots(weekDays.map((day) => ({
+      dayOfWeek: day.value,
+      startTime: "09:00",
+      endTime: "17:00",
+      mode: "both"
+    })));
+  };
+
   const removeSlot = (index) => {
     setAvailabilitySlots((prev) => {
       if (prev.length === 1) {
@@ -702,7 +795,11 @@ const DoctorDashboard = () => {
                   <td className="px-4 py-3">{item.specialty}</td>
                   <td className="px-4 py-3">{new Date(item.scheduledAt).toLocaleString()}</td>
                   <td className="px-4 py-3">{item.durationMinutes || 30} min</td>
-                  <td className="px-4 py-3"><span className="px-2 py-1 rounded-full text-xs bg-amber-50 text-amber-700">{item.status}</span></td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 rounded-full text-xs transition-all duration-500 ${isAppointmentRecentlyChanged(item._id) ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300" : "bg-amber-50 text-amber-700"}`}>
+                      {item.status}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex gap-2">
                       <button onClick={() => handleAccept(item._id)} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-md px-3 py-1 inline-flex items-center gap-1"><Check className="h-4 w-4" /> Accept</button>
@@ -738,7 +835,11 @@ const DoctorDashboard = () => {
                   <td className="px-4 py-3">{item.specialty}</td>
                   <td className="px-4 py-3">{new Date(item.scheduledAt).toLocaleString()}</td>
                   <td className="px-4 py-3">{item.durationMinutes || 30} min</td>
-                  <td className="px-4 py-3"><span className="px-2 py-1 rounded-full text-xs bg-cyan-50 text-cyan-700">{item.status}</span></td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 rounded-full text-xs transition-all duration-500 ${isAppointmentRecentlyChanged(item._id) ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300" : "bg-cyan-50 text-cyan-700"}`}>
+                      {item.status}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-right">
                     {canJoinConsultation(item) ? null : (
                       <p className="text-xs text-amber-700 mb-1">{getConsultationJoinAvailability(item).message}</p>
@@ -944,12 +1045,24 @@ const DoctorDashboard = () => {
 
       {activeTab === "availability" ? (
         <form onSubmit={handleSaveAvailability} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-3xl">
-          <h2 className="text-lg font-semibold inline-flex items-center gap-2"><Settings2 className="h-5 w-5 text-teal-700" /> Availability</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold inline-flex items-center gap-2"><Settings2 className="h-5 w-5 text-teal-700" /> Availability</h2>
+            <div className="inline-flex items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded-full border border-teal-200 bg-teal-50 text-teal-700">{availabilitySlots.length} weekly slot{availabilitySlots.length === 1 ? "" : "s"}</span>
+              <span className="px-2.5 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700">{unavailablePeriods.length} blocked period{unavailablePeriods.length === 1 ? "" : "s"}</span>
+            </div>
+          </div>
 
-          <div className="space-y-3">
-            <p className="text-sm font-medium text-slate-700">Weekly Availability Slots</p>
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-sm font-medium text-slate-700">Weekly Availability Slots</p>
+              <div className="inline-flex items-center gap-2">
+                <button type="button" onClick={applyWeekdayTemplate} className="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100">Mon-Fri 09:00-17:00</button>
+                <button type="button" onClick={applyDailyTemplate} className="text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100">All Days 09:00-17:00</button>
+              </div>
+            </div>
             {availabilitySlots.map((slot, index) => (
-              <div key={`slot-${index}`} className="border border-slate-200 rounded-lg p-3 space-y-2">
+              <div key={`slot-${index}`} className="border border-slate-200 bg-white rounded-lg p-3 space-y-2">
                 <p className="text-sm font-medium text-slate-700">Slot {index + 1}</p>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                   <div>
@@ -982,14 +1095,14 @@ const DoctorDashboard = () => {
                 </div>
               </div>
             ))}
-            <button type="button" onClick={addSlot} className="text-sm text-teal-700 hover:text-teal-800">+ Add slot</button>
-            <p className="text-xs text-slate-500">Tip: Add weekly repeating slots (e.g., Monday 09:00-17:00). Patients can only book within these slots and your unavailable periods.</p>
+            <button type="button" onClick={addSlot} className="text-sm px-3 py-1.5 rounded-md border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100">+ Add slot</button>
+            <p className="text-xs text-slate-500">Set your normal weekly schedule here. If a date is blocked below, patients will not be able to book in that blocked window.</p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
             <p className="text-sm font-medium text-slate-700">Unavailable Periods</p>
             {unavailablePeriods.map((period, index) => (
-              <div key={`period-${index}`} className="border border-slate-200 rounded-lg p-3 space-y-2">
+              <div key={`period-${index}`} className="border border-slate-200 bg-white rounded-lg p-3 space-y-2">
                 <p className="text-sm font-medium text-slate-700">Unavailable period {index + 1}</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <div>
@@ -1010,7 +1123,7 @@ const DoctorDashboard = () => {
                 </div>
               </div>
             ))}
-            <button type="button" onClick={addUnavailablePeriod} className="text-sm text-teal-700 hover:text-teal-800">+ Add unavailable period</button>
+            <button type="button" onClick={addUnavailablePeriod} className="text-sm px-3 py-1.5 rounded-md border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100">+ Add unavailable period</button>
           </div>
 
           <button disabled={savingAvailability} className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2 inline-flex items-center gap-1"><CalendarClock className="h-4 w-4" /> {savingAvailability ? "Saving..." : "Save Availability"}</button>

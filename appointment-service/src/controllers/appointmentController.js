@@ -14,8 +14,10 @@ const mapError = (next, error) => {
 
 const getDoctors = async (req, res, next) => {
   try {
+    const specialization = req.query.specialization || req.query.specialty;
+
     const doctors = await appointmentService.searchDoctors({
-      specialty: req.query.specialty,
+      specialty: specialization,
       name: req.query.name,
       availability: req.query.availability,
       headers: appointmentService.authHeaderFromReq(req)

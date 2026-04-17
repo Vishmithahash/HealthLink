@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FileText, Upload, User, Bot, Stethoscope, CircleX, LoaderCircle, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import DatePicker from "react-datepicker";
+import "../styles/react-datepicker.css";
 import { getUserInfo } from "../utils/auth";
 import {
   deletePatientReport,
@@ -24,6 +26,7 @@ import {
 import { extractErrorMessage } from "../services/api";
 import { getOrCreateTelemedicineSession, startTelemedicineSession } from "../services/telemedicineService";
 import { notifyCustomBestEffort, pushLocalNotification } from "../services/notificationService";
+import { subscribeToAppointmentChanges, watchAppointmentRooms } from "../services/appointmentRealtime";
 import SymptomChecker from "./SymptomChecker";
 
 const tabs = ["appointments", "book", "profile", "reports", "prescriptions", "symptom-checker"];
@@ -48,6 +51,38 @@ const parseCsv = (value) =>
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+
+const toLocalDateInputValue = (date = new Date()) => {
+  const tzOffset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - tzOffset * 60000);
+  return localDate.toISOString().slice(0, 10);
+};
+
+const toLocalDateTimeInputValue = (date = new Date()) => {
+  const tzOffset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - tzOffset * 60000);
+  return localDate.toISOString().slice(0, 16);
+};
+
+const toLocalDateTimeFromDate = (date) => {
+  if (!date || Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return toLocalDateTimeInputValue(date);
+};
+
+const formatDateInputValue = (date) => {
+  const tzOffset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - tzOffset * 60000);
+  return localDate.toISOString().slice(0, 10);
+};
+
+const formatMinutesAsTime = (totalMinutes) => {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+};
 
 const PatientDashboard = () => {
   const user = getUserInfo();
@@ -78,6 +113,7 @@ const PatientDashboard = () => {
   const [paymentError, setPaymentError] = useState("");
   const [slipFile, setSlipFile] = useState(null);
   const [toast, setToast] = useState({ type: "", message: "" });
+  const [recentlyChangedAppointments, setRecentlyChangedAppointments] = useState({});
 
   const [profile, setProfile] = useState({
     fullName: user?.fullName || "",
@@ -111,7 +147,25 @@ const PatientDashboard = () => {
     consultationId: ""
   });
   const reportFileInputRef = useRef(null);
-  const bookingRestricted = ["inactive", "suspended"].includes(String(patientAccountStatus || "").toLowerCase());
+  const minAvailabilityDate = toLocalDateInputValue();
+  const accountRestricted = ["inactive", "suspended"].includes(String(patientAccountStatus || "").toLowerCase());
+  const bookingRestricted = accountRestricted;
+
+  const selectedBookingDateTime = useMemo(() => {
+    if (!bookingForm.scheduledAt) {
+      return null;
+    }
+
+    const parsed = new Date(bookingForm.scheduledAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    return parsed;
+  }, [bookingForm.scheduledAt]);
+
+  const bookingDateValue = selectedBookingDateTime ? formatDateInputValue(selectedBookingDateTime) : "";
+  const bookingTimeValue = selectedBookingDateTime ? formatMinutesAsTime(selectedBookingDateTime.getHours() * 60 + selectedBookingDateTime.getMinutes()) : "";
 
   const doctorOptions = useMemo(() => {
     return doctors.map((doctor) => ({
@@ -124,6 +178,9 @@ const PatientDashboard = () => {
   const selectedDoctor = useMemo(() => {
     return doctors.find((doctor) => String(doctor?.userId || doctor?._id || "") === String(bookingForm.doctorId || "")) || null;
   }, [doctors, bookingForm.doctorId]);
+
+  const filteredDoctorCount = doctorOptions.length;
+  const hasActiveDoctorFilters = Boolean(doctorFilters.name || doctorFilters.specialty || doctorFilters.availability);
 
   const parseTimeToMinutes = (value) => {
     const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
@@ -178,19 +235,23 @@ const PatientDashboard = () => {
     return `${recurringText}. ${unavailableText}`;
   }, [selectedDoctor]);
 
-  const isBookingTimeInsideDoctorAvailability = () => {
-    if (!selectedDoctor || !bookingForm.scheduledAt) {
+  const evaluateBookingTimeAgainstDoctorAvailability = (scheduledAtValue, durationMinutesOverride = null) => {
+    if (!selectedDoctor || !scheduledAtValue) {
       return { valid: true, message: "" };
     }
 
-    const scheduledStart = new Date(bookingForm.scheduledAt);
+    const scheduledStart = new Date(scheduledAtValue);
     if (Number.isNaN(scheduledStart.getTime())) {
       return { valid: false, message: "Please choose a valid appointment date and time." };
     }
 
-    const duration = Number(bookingForm.durationMinutes || 30);
+    const duration = Number((durationMinutesOverride ?? bookingForm.durationMinutes) || 30);
     const scheduledEnd = new Date(scheduledStart.getTime() + duration * 60000);
     const doctorTimeZone = String(selectedDoctor?.workingHours?.timezone || "Asia/Colombo");
+
+    if (scheduledStart < new Date()) {
+      return { valid: false, message: "Selected time is in the past." };
+    }
 
     const unavailable = Array.isArray(selectedDoctor.unavailablePeriods) ? selectedDoctor.unavailablePeriods : [];
     const overlapsBlockedPeriod = unavailable.some((period) => {
@@ -204,6 +265,31 @@ const PatientDashboard = () => {
 
     if (overlapsBlockedPeriod) {
       return { valid: false, message: "Selected time overlaps a doctor unavailable period." };
+    }
+
+    const selectedDoctorId = String(selectedDoctor?.userId || selectedDoctor?._id || "");
+    const overlapsExistingAppointment = (Array.isArray(appointments) ? appointments : []).some((appointment) => {
+      if (String(appointment?.doctorId || "") !== selectedDoctorId) {
+        return false;
+      }
+
+      const status = String(appointment?.status || "").toLowerCase();
+      if (["cancelled", "rejected", "completed", "no_show"].includes(status)) {
+        return false;
+      }
+
+      const appointmentStart = new Date(appointment.scheduledAt);
+      if (Number.isNaN(appointmentStart.getTime())) {
+        return false;
+      }
+
+      const appointmentDuration = Number(appointment.durationMinutes || 30);
+      const appointmentEnd = new Date(appointmentStart.getTime() + appointmentDuration * 60000);
+      return scheduledStart < appointmentEnd && scheduledEnd > appointmentStart;
+    });
+
+    if (overlapsExistingAppointment) {
+      return { valid: false, message: "Selected time is already booked. Please choose another slot." };
     }
 
     const startParts = getZonedDateParts(scheduledStart, doctorTimeZone);
@@ -244,6 +330,211 @@ const PatientDashboard = () => {
     return { valid: true, message: "" };
   };
 
+  const isBookingTimeInsideDoctorAvailability = () => {
+    return evaluateBookingTimeAgainstDoctorAvailability(bookingForm.scheduledAt);
+  };
+
+  const buildCandidateTimesForDate = (dateValue, durationMinutesOverride = null) => {
+    if (!selectedDoctor || !dateValue) {
+      return [];
+    }
+
+    const duration = Number((durationMinutesOverride ?? bookingForm.durationMinutes) || 30);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return [];
+    }
+
+    const date = new Date(`${dateValue}T00:00:00`);
+    if (Number.isNaN(date.getTime())) {
+      return [];
+    }
+
+    const dayOfWeek = date.getDay();
+    const slots = Array.isArray(selectedDoctor.availabilitySlots) ? selectedDoctor.availabilitySlots : [];
+    const recurring = slots.filter((slot) => slot?.dayOfWeek != null && slot?.startTime && slot?.endTime);
+
+    const sourceSlots = recurring.length > 0
+      ? recurring.filter((slot) => Number(slot.dayOfWeek) === dayOfWeek)
+      : [{ startTime: selectedDoctor?.workingHours?.start || "09:00", endTime: selectedDoctor?.workingHours?.end || "17:00" }];
+
+    const candidateTimes = sourceSlots.flatMap((slot) => {
+      const start = parseTimeToMinutes(slot.startTime);
+      const end = parseTimeToMinutes(slot.endTime);
+      if (start == null || end == null || end <= start) {
+        return [];
+      }
+
+      const slotsForRange = [];
+      for (let minute = start; minute + duration <= end; minute += 30) {
+        slotsForRange.push(formatMinutesAsTime(minute));
+      }
+
+      return slotsForRange;
+    });
+
+    const uniqueCandidates = [...new Set(candidateTimes)].sort((a, b) => a.localeCompare(b));
+
+    return uniqueCandidates.filter((timeValue) => {
+      const check = evaluateBookingTimeAgainstDoctorAvailability(`${dateValue}T${timeValue}`, duration);
+      return check.valid;
+    });
+  };
+
+  const availableBookingDates = useMemo(() => {
+    if (!selectedDoctor) {
+      return [];
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dates = [];
+    for (let offset = 0; offset < 45; offset += 1) {
+      const nextDate = new Date(today);
+      nextDate.setDate(today.getDate() + offset);
+      const dateValue = formatDateInputValue(nextDate);
+      if (buildCandidateTimesForDate(dateValue).length > 0) {
+        dates.push(dateValue);
+      }
+    }
+
+    return dates;
+  }, [selectedDoctor, bookingForm.durationMinutes, appointments]);
+
+  const availableBookingTimes = useMemo(() => {
+    if (!bookingDateValue) {
+      return [];
+    }
+
+    return buildCandidateTimesForDate(bookingDateValue);
+  }, [bookingDateValue, selectedDoctor, bookingForm.durationMinutes, appointments]);
+
+  const availableBookingDateSet = useMemo(() => new Set(availableBookingDates), [availableBookingDates]);
+
+  const setScheduledAtIfChanged = (nextScheduledAt) => {
+    setBookingForm((prev) => {
+      if (prev.scheduledAt === nextScheduledAt) {
+        return prev;
+      }
+
+      return { ...prev, scheduledAt: nextScheduledAt };
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedDoctor) {
+      return;
+    }
+
+    if (availableBookingDates.length === 0) {
+      setScheduledAtIfChanged("");
+      return;
+    }
+
+    if (!bookingDateValue || !availableBookingDates.includes(bookingDateValue)) {
+      const nextDate = availableBookingDates[0];
+      const nextTime = buildCandidateTimesForDate(nextDate)[0] || "";
+      setScheduledAtIfChanged(nextTime ? `${nextDate}T${nextTime}` : "");
+      return;
+    }
+
+    if (!bookingTimeValue || !availableBookingTimes.includes(bookingTimeValue)) {
+      const nextTime = availableBookingTimes[0] || "";
+      setScheduledAtIfChanged(nextTime ? `${bookingDateValue}T${nextTime}` : "");
+    }
+  }, [selectedDoctor, availableBookingDates, availableBookingTimes, bookingDateValue, bookingTimeValue]);
+
+  useEffect(() => {
+    if (!accountRestricted) {
+      return;
+    }
+
+    setActiveTab("appointments");
+    closePaymentModal();
+  }, [accountRestricted]);
+
+  const handleBookingDateTimeChange = (nextDate) => {
+    if (!nextDate || Number.isNaN(nextDate.getTime())) {
+      setScheduledAtIfChanged("");
+      return;
+    }
+
+    const selectedDateValue = formatDateInputValue(nextDate);
+    const selectedTimeValue = formatMinutesAsTime(nextDate.getHours() * 60 + nextDate.getMinutes());
+    const times = buildCandidateTimesForDate(selectedDateValue);
+    const preferredTime = times.includes(selectedTimeValue)
+      ? selectedTimeValue
+      : (times.includes(bookingTimeValue) ? bookingTimeValue : (times[0] || ""));
+
+    setScheduledAtIfChanged(preferredTime ? `${selectedDateValue}T${preferredTime}` : "");
+  };
+
+  const isBookingDateSelectable = (date) => {
+    if (!selectedDoctor || !date || Number.isNaN(date.getTime())) {
+      return false;
+    }
+
+    const dateValue = formatDateInputValue(date);
+    return availableBookingDateSet.has(dateValue);
+  };
+
+  const isBookingTimeSelectable = (date) => {
+    if (!selectedDoctor || !date || Number.isNaN(date.getTime())) {
+      return false;
+    }
+
+    const dateValue = formatDateInputValue(date);
+    const timeValue = formatMinutesAsTime(date.getHours() * 60 + date.getMinutes());
+    return buildCandidateTimesForDate(dateValue).includes(timeValue);
+  };
+
+  const availableBookingDatesAsDateObjects = useMemo(() => {
+    return availableBookingDates.map((dateValue) => new Date(`${dateValue}T00:00:00`));
+  }, [availableBookingDates]);
+
+  const availableBookingTimesAsDateObjects = useMemo(() => {
+    if (!bookingDateValue) {
+      return [];
+    }
+
+    return availableBookingTimes.map((timeValue) => {
+      const [hour, minute] = String(timeValue).split(":").map((part) => Number(part));
+      const date = new Date(`${bookingDateValue}T00:00:00`);
+      date.setHours(hour, minute, 0, 0);
+      return date;
+    });
+  }, [availableBookingTimes, bookingDateValue]);
+
+  const minSelectableDateTime = useMemo(() => {
+    const now = new Date();
+    const rounded = new Date(now.getTime());
+    rounded.setSeconds(0, 0);
+    const remainder = rounded.getMinutes() % 30;
+    if (remainder !== 0) {
+      rounded.setMinutes(rounded.getMinutes() + (30 - remainder));
+    }
+    return rounded;
+  }, [bookingForm.durationMinutes]);
+
+  const bookingCalendarValue = useMemo(() => {
+    if (!selectedBookingDateTime) {
+      return null;
+    }
+
+    const check = evaluateBookingTimeAgainstDoctorAvailability(toLocalDateTimeFromDate(selectedBookingDateTime));
+    return check.valid ? selectedBookingDateTime : null;
+  }, [selectedBookingDateTime, selectedDoctor, bookingForm.durationMinutes, appointments]);
+
+  const bookingPickerPlaceholder = selectedDoctor ? "Select date and time" : "Select doctor first";
+
+  const handleRestrictedTabClick = (tab) => {
+    if (accountRestricted) {
+      return;
+    }
+
+    setActiveTab(tab);
+  };
+
   const doctorNameById = useMemo(() => {
     const entries = doctors.flatMap((doctor) => {
       const name = doctor?.fullName || doctor?.name;
@@ -253,6 +544,23 @@ const PatientDashboard = () => {
 
     return new Map(entries);
   }, [doctors]);
+
+  const markAppointmentAsRecentlyChanged = (appointmentId) => {
+    const normalizedId = String(appointmentId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+
+    setRecentlyChangedAppointments((prev) => ({
+      ...prev,
+      [normalizedId]: Date.now()
+    }));
+  };
+
+  const isAppointmentRecentlyChanged = (appointmentId) => {
+    const changedAt = recentlyChangedAppointments[String(appointmentId || "")];
+    return Number.isFinite(changedAt) && Date.now() - changedAt < 5000;
+  };
 
   const reportConsultationOptions = useMemo(() => {
     return (Array.isArray(appointments) ? appointments : [])
@@ -330,7 +638,7 @@ const PatientDashboard = () => {
       const params = {
         name: filters.name || undefined,
         specialty: filters.specialty || undefined,
-        availability: filters.availability ? new Date(filters.availability).toISOString() : undefined
+        availability: filters.availability ? new Date(`${filters.availability}T12:00:00`).toISOString() : undefined
       };
 
       const doctorData = await getDoctors(params).catch(() => []);
@@ -430,6 +738,40 @@ const PatientDashboard = () => {
   useEffect(() => {
     loadDashboard();
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAppointmentChanges(async (event) => {
+      const changedAppointmentId = event?.appointment?._id;
+      if (changedAppointmentId) {
+        markAppointmentAsRecentlyChanged(changedAppointmentId);
+      }
+      await loadDashboard();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const cutoff = Date.now() - 5000;
+      setRecentlyChangedAppointments((prev) => {
+        const entries = Object.entries(prev).filter(([, changedAt]) => changedAt >= cutoff);
+        return entries.length === Object.keys(prev).length ? prev : Object.fromEntries(entries);
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!Array.isArray(appointments) || appointments.length === 0) {
+      return;
+    }
+
+    watchAppointmentRooms(appointments);
+  }, [appointments]);
 
   useEffect(() => {
     loadDoctors(doctorFilters);
@@ -968,40 +1310,43 @@ const PatientDashboard = () => {
 
   const paymentModal = paymentModalOpen && selectedAppointmentForPayment ? (
     <div className="fixed inset-0 z-70 bg-black/45 backdrop-blur-[1px] overflow-y-auto p-4">
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4 my-8 mx-auto max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-xl bg-white rounded-3xl shadow-2xl border border-slate-200 p-6 space-y-5 my-8 mx-auto max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Pay Appointment</h3>
+            <h3 className="text-xl font-semibold text-slate-900">Pay Appointment</h3>
             <p className="text-sm text-slate-600 mt-1">
               {resolveDoctorName(selectedAppointmentForPayment.doctorId)} | {new Date(selectedAppointmentForPayment.scheduledAt).toLocaleString()}
             </p>
           </div>
-          <button onClick={closePaymentModal} className="text-slate-500 hover:text-slate-700">Close</button>
+          <button onClick={closePaymentModal} className="text-xs font-medium px-3 py-1.5 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-100">Close</button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-sm text-slate-700">Amount</label>
+            <label className="text-xs uppercase tracking-wide text-slate-500">Amount</label>
             <input
               type="number"
               min="1"
               step="0.01"
               value={paymentAmount}
               onChange={(e) => setPaymentAmount(Number(e.target.value || 0))}
-              className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+              className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
             />
           </div>
           <div>
-            <label className="text-sm text-slate-700">Currency</label>
+            <label className="text-xs uppercase tracking-wide text-slate-500">Currency</label>
             <select
               value={paymentCurrency}
               onChange={(e) => setPaymentCurrency(e.target.value)}
-              className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+              className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
             >
               <option value="LKR">LKR</option>
               <option value="USD">USD</option>
             </select>
           </div>
+          <p className="md:col-span-2 text-xs text-slate-500">
+            Confirm the amount before payment. Card payments require OTP verification.
+          </p>
         </div>
 
         <div className="inline-flex rounded-lg border border-slate-200 p-1 bg-slate-50">
@@ -1036,7 +1381,7 @@ const PatientDashboard = () => {
                 type="button"
                 disabled={paymentBusy}
                 onClick={startCardPayment}
-                className="bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
+                className="w-full md:w-auto bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
               >
                 {paymentBusy ? "Initializing..." : "Initialize Card Payment"}
               </button>
@@ -1056,20 +1401,22 @@ const PatientDashboard = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            <div>
-              <label className="text-sm text-slate-700">Upload bank transfer slip (jpg/png)</label>
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/80 px-4 py-4">
+              <label className="text-sm font-medium text-slate-700">Upload bank transfer slip (jpg/png)</label>
+              <p className="text-xs text-slate-500 mt-1">Add a clear image. Admin will verify and mark this appointment as paid.</p>
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/jpg"
                 onChange={(e) => setSlipFile(e.target.files?.[0] || null)}
-                className="block mt-1"
+                className="block mt-2 text-sm"
               />
+              {slipFile ? <p className="text-xs text-emerald-700 mt-2">Selected file: {slipFile.name}</p> : null}
             </div>
             <button
               type="button"
               disabled={paymentBusy || !slipFile}
               onClick={handleUploadSlipPayment}
-              className="bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
+              className="w-full md:w-auto bg-indigo-700 hover:bg-indigo-800 disabled:bg-slate-400 text-white rounded-md px-4 py-2"
             >
               {paymentBusy ? "Uploading..." : "Submit Slip"}
             </button>
@@ -1082,8 +1429,15 @@ const PatientDashboard = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="rounded-2xl bg-linear-to-r from-teal-700 to-cyan-700 text-white p-6 shadow-lg">
-        <h1 className="text-2xl md:text-3xl font-bold">Patient Command Center</h1>
-        <p className="opacity-90 mt-1">Manage appointments, records, and prescriptions from one place.</p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold">Patient Command Center</h1>
+            <p className="opacity-90 mt-1">Manage appointments, records, and prescriptions from one place.</p>
+          </div>
+          <span className={`text-xs md:text-sm px-3 py-1.5 rounded-full border capitalize ${accountRestricted ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+            Account: {patientAccountStatus || "active"}
+          </span>
+        </div>
       </div>
 
       <div className="border-b border-slate-200 overflow-x-auto">
@@ -1091,8 +1445,9 @@ const PatientDashboard = () => {
           {tabs.map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`capitalize py-3 border-b-2 transition ${activeTab === tab ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent hover:text-slate-700"}`}
+              onClick={() => handleRestrictedTabClick(tab)}
+              disabled={accountRestricted}
+              className={`capitalize py-3 border-b-2 transition ${activeTab === tab ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent hover:text-slate-700"} ${accountRestricted ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               {tab.replace("-", " ")}
             </button>
@@ -1105,15 +1460,17 @@ const PatientDashboard = () => {
       {profileMissing ? (
         <p className="text-sm text-amber-700">Patient profile is missing for this account. Complete the Profile tab once to unlock prescriptions and records.</p>
       ) : null}
-      <div className={`rounded-lg border px-4 py-3 text-sm ${bookingRestricted ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
-        Account status: <span className="font-semibold capitalize">{patientAccountStatus || "active"}</span>
-        {bookingRestricted ? " | Booking is disabled for this account." : " | Booking is enabled."}
-      </div>
       {loading ? (
         <div className="flex items-center gap-2 text-slate-600"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading dashboard...</div>
       ) : null}
 
-      {activeTab === "appointments" ? (
+      {accountRestricted ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 text-rose-800 p-5 text-sm">
+          Your account is currently <span className="font-semibold capitalize">{patientAccountStatus}</span>. Booking appointments, AI checker access, and all account actions are disabled until reactivated by admin/support.
+        </div>
+      ) : null}
+
+      {!accountRestricted && activeTab === "appointments" ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <table className="min-w-full">
             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
@@ -1148,7 +1505,9 @@ const PatientDashboard = () => {
                     <td className="px-4 py-3">{new Date(appointment.scheduledAt).toLocaleString()}</td>
                     <td className="px-4 py-3">{appointment.durationMinutes || 30} min</td>
                     <td className="px-4 py-3">
-                      <span className="px-2 py-1 rounded-full text-xs bg-cyan-50 text-cyan-700">{appointment.status}</span>
+                      <span className={`px-2 py-1 rounded-full text-xs transition-all duration-500 ${isAppointmentRecentlyChanged(appointment._id) ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300" : "bg-cyan-50 text-cyan-700"}`}>
+                        {appointment.status}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <span className="px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">{paymentStatus}</span>
@@ -1190,7 +1549,7 @@ const PatientDashboard = () => {
 
       {paymentModal ? createPortal(paymentModal, document.body) : null}
 
-      {activeTab === "book" ? (
+      {!accountRestricted && activeTab === "book" ? (
         <form onSubmit={handleBookAppointment} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-2xl">
           <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Book Appointment</h2>
           {bookingRestricted ? (
@@ -1199,48 +1558,63 @@ const PatientDashboard = () => {
             </p>
           ) : null}
           <fieldset disabled={bookingRestricted} className="space-y-4 disabled:opacity-60">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm text-slate-700">Search doctor by name</label>
-              <input
-                value={doctorFilters.name}
-                onChange={(e) => setDoctorFilters((prev) => ({ ...prev, name: e.target.value }))}
-                className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-              />
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm font-medium text-slate-700">Find your doctor</p>
+              <span className="text-xs px-2.5 py-1 rounded-full border border-teal-200 bg-teal-50 text-teal-700">
+                {loadingDoctors ? "Updating list..." : `${filteredDoctorCount} doctor${filteredDoctorCount === 1 ? "" : "s"} found`}
+              </span>
             </div>
-            <div>
-              <label className="text-sm text-slate-700">Filter by specialization</label>
-              <select
-                value={doctorFilters.specialty}
-                onChange={(e) => setDoctorFilters((prev) => ({ ...prev, specialty: e.target.value }))}
-                className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-              >
-                <option value="">All specializations</option>
-                {specialties.map((specialty) => (
-                  <option key={specialty} value={specialty}>{specialty}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm text-slate-700">Search doctor by name</label>
+                <input
+                  value={doctorFilters.name}
+                  onChange={(e) => setDoctorFilters((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-slate-700">Filter by specialization</label>
+                <select
+                  value={doctorFilters.specialty}
+                  onChange={(e) => setDoctorFilters((prev) => ({ ...prev, specialty: e.target.value }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
+                >
+                  <option value="">All specializations</option>
+                  {specialties.map((specialty) => (
+                    <option key={specialty} value={specialty}>{specialty}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
-            <div>
-              <label className="text-sm text-slate-700">Filter by availability</label>
-              <input
-                type="datetime-local"
-                value={doctorFilters.availability}
-                onChange={(e) => setDoctorFilters((prev) => ({ ...prev, availability: e.target.value }))}
-                className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+              <div>
+                <label className="text-sm text-slate-700">Filter by availability</label>
+                <input
+                  type="date"
+                  min={minAvailabilityDate}
+                  value={doctorFilters.availability}
+                  onChange={(e) => setDoctorFilters((prev) => ({ ...prev, availability: e.target.value }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
+                />
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setDoctorFilters({ name: "", specialty: "", availability: "" })}
+                  className="text-sm text-teal-700 hover:text-teal-800 disabled:text-slate-400"
+                  disabled={!hasActiveDoctorFilters}
+                >
+                  Reset filters
+                </button>
+              </div>
             </div>
-            <div>
-              <button
-                type="button"
-                onClick={() => setDoctorFilters({ name: "", specialty: "", availability: "" })}
-                className="text-sm text-teal-700 hover:text-teal-800"
-              >
-                Reset filters
-              </button>
-            </div>
+            {hasActiveDoctorFilters && filteredDoctorCount === 0 ? (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                No doctors match your current filters. Try clearing one filter and search again.
+              </p>
+            ) : null}
           </div>
           <div>
             <label className="text-sm text-slate-700">Doctor</label>
@@ -1255,16 +1629,38 @@ const PatientDashboard = () => {
                 <option key={doctor.id} value={doctor.id}>{doctor.label}</option>
               ))}
             </select>
+            {selectedDoctor ? (
+              <p className="mt-2 text-xs text-slate-600 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                Selected: {selectedDoctor.fullName} | {selectedDoctor.specialization} | Fee {Number(selectedDoctor.consultationFee || 0).toLocaleString()} LKR
+              </p>
+            ) : null}
           </div>
           <div>
             <label className="text-sm text-slate-700">Date and Time</label>
-            <input
-              required
-              type="datetime-local"
-              value={bookingForm.scheduledAt}
-              onChange={(e) => setBookingForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
-              className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-            />
+            <div className="mt-1">
+              <DatePicker
+                selected={bookingCalendarValue}
+                onChange={handleBookingDateTimeChange}
+                showTimeSelect
+                timeIntervals={30}
+                minDate={minSelectableDateTime}
+                includeDates={availableBookingDatesAsDateObjects}
+                includeTimes={availableBookingTimesAsDateObjects}
+                filterDate={isBookingDateSelectable}
+                filterTime={isBookingTimeSelectable}
+                dateFormat="Pp"
+                placeholderText={bookingPickerPlaceholder}
+                disabled={!selectedDoctor}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 bg-white"
+                calendarClassName="healthlink-booking-calendar"
+                popperPlacement="bottom-start"
+              />
+            </div>
+            {selectedDoctor && availableBookingDates.length === 0 ? (
+              <p className="mt-2 text-xs text-amber-700 border border-amber-200 rounded-md bg-amber-50 px-3 py-2">
+                This doctor has no bookable slots in the next 45 days based on working hours and blocked periods.
+              </p>
+            ) : null}
             <p className="mt-1 text-xs text-slate-500">{bookingAvailabilityHint}</p>
           </div>
           <div>
@@ -1295,7 +1691,7 @@ const PatientDashboard = () => {
         </form>
       ) : null}
 
-      {activeTab === "profile" ? (
+      {!accountRestricted && activeTab === "profile" ? (
         <form onSubmit={handleSaveProfile} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-2xl">
           <h2 className="text-lg font-semibold inline-flex items-center gap-2"><User className="h-5 w-5 text-teal-700" /> Patient Profile</h2>
           <div>
@@ -1356,7 +1752,7 @@ const PatientDashboard = () => {
         </form>
       ) : null}
 
-      {activeTab === "reports" ? (
+      {!accountRestricted && activeTab === "reports" ? (
         <div className="space-y-4">
           <form onSubmit={handleUpload} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-3 max-w-2xl">
             <h2 className="text-lg font-semibold inline-flex items-center gap-2"><Upload className="h-5 w-5 text-teal-700" /> Upload Report</h2>
@@ -1431,7 +1827,7 @@ const PatientDashboard = () => {
         </div>
       ) : null}
 
-      {activeTab === "prescriptions" ? (
+      {!accountRestricted && activeTab === "prescriptions" ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
           <h2 className="font-semibold text-slate-900 inline-flex items-center gap-2"><FileText className="h-5 w-5 text-teal-700" /> Prescriptions</h2>
           <ul className="mt-3 space-y-2 text-sm text-slate-700">
@@ -1452,7 +1848,7 @@ const PatientDashboard = () => {
         </div>
       ) : null}
 
-      {activeTab === "symptom-checker" ? (
+      {!accountRestricted && activeTab === "symptom-checker" ? (
         <div>
           <SymptomChecker />
         </div>

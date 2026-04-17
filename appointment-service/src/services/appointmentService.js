@@ -2,6 +2,7 @@ const axios = require("axios");
 const Appointment = require("../models/appointmentModel");
 const DoctorAvailability = require("../models/doctorAvailabilityModel");
 const env = require("../config/env");
+const { emitAppointmentChanged } = require("../realtime/socketServer");
 
 class ServiceError extends Error {
   constructor(statusCode, message, details = null) {
@@ -459,7 +460,7 @@ const ensureTelemedicineSession = async ({ appointment, headers }) => {
 const searchDoctors = async ({ specialty, name, availability, headers }) => {
   try {
     const response = await httpClient.get(`${env.doctorServiceUrl}/api/doctors`, {
-      params: { specialty, name, availability },
+      params: { specialization: specialty, specialty, name, availability },
       headers
     });
 
@@ -565,6 +566,7 @@ const createAppointment = async ({ body, user, headers }) => {
     body.notification && typeof body.notification === "object" ? body.notification : body;
 
   await notifyExternalSystems({ appointment, headers, notificationContext });
+  emitAppointmentChanged({ action: "created", appointment });
 
   return appointment;
 };
@@ -598,6 +600,7 @@ const rescheduleAppointment = async ({ id, body, user, headers }) => {
   appointment.status = "pending"; // Reset to pending if rescheduled?
   
   await appointment.save();
+  emitAppointmentChanged({ action: "rescheduled", appointment });
   return appointment;
 };
 
@@ -608,6 +611,7 @@ const cancelAppointment = async ({ id, body, user }) => {
   appointment.status = "cancelled";
   appointment.cancelledReason = body.cancelledReason || "Cancelled by user";
   await appointment.save();
+  emitAppointmentChanged({ action: "cancelled", appointment });
   
   return appointment;
 };
@@ -634,6 +638,7 @@ const updateAppointmentStatus = async ({ id, body, user, headers }) => {
   await appointment.save();
 
   await ensureTelemedicineSession({ appointment, headers });
+  emitAppointmentChanged({ action: "status-updated", appointment });
   
   return appointment;
 };
