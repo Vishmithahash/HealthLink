@@ -1,11 +1,12 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getUserInfo, logout } from '../utils/auth';
+import { getDashboardByRole, getUserInfo, logout } from '../utils/auth';
 import { Activity, LogOut, User, Bell } from 'lucide-react';
 
 const Navbar = () => {
     const user = getUserInfo();
     const navigate = useNavigate();
+    const homeTarget = user ? getDashboardByRole(user.role) : '/';
 
     const handleLogout = () => {
         logout();
@@ -17,7 +18,7 @@ const Navbar = () => {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16">
                     <div className="flex">
-                        <Link to="/" className="flex-shrink-0 flex items-center">
+                        <Link to={homeTarget} className="flex-shrink-0 flex items-center">
                             <Activity className="h-8 w-8 text-teal-700 mr-2" />
                             <span className="font-bold text-xl text-slate-800">HealthLink</span>
                         </Link>
