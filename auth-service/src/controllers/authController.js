@@ -80,11 +80,59 @@ const validateToken = async (req, res) => {
   });
 };
 
+const listUsers = async (req, res, next) => {
+  try {
+    const users = await authService.listUsers({ role: req.query.role });
+
+    return res.status(200).json({
+      success: true,
+      message: "Users fetched successfully",
+      data: users
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const getInternalUserById = async (req, res, next) => {
+  try {
+    const user = await authService.getInternalUserById({ userId: req.params.id });
+
+    return res.status(200).json({
+      success: true,
+      message: "Internal user lookup successful",
+      data: user
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const updateInternalUserById = async (req, res, next) => {
+  try {
+    const user = await authService.updateInternalUserById({
+      userId: req.params.id,
+      payload: req.body || {}
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Internal user update successful",
+      data: user
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   register,
   login,
   refresh,
   logout,
   me,
-  validateToken
+  validateToken,
+  listUsers,
+  getInternalUserById,
+  updateInternalUserById
 };

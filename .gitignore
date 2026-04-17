@@ -1,0 +1,3 @@
+/ai-service/.env
+/k8s/ai-secret.yaml
+/k8s/apply-all.yaml

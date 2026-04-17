@@ -3,23 +3,12 @@ const { body } = require("express-validator");
 
 const authController = require("../controllers/authController");
 const authMiddleware = require("../middleware/authMiddleware");
+const internalServiceAuth = require("../middleware/internalServiceAuth");
 const roleMiddleware = require("../middleware/roleMiddleware");
 const validateRequest = require("../middleware/validateRequest");
+const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doctorSpecialties");
 
 const router = express.Router();
-
-const DOCTOR_SPECIALTIES = [
-  "General Physician",
-  "Cardiologist",
-  "Dermatologist",
-  "Neurologist",
-  "Orthopedic",
-  "Pediatrician",
-  "Gynecologist",
-  "Psychiatrist",
-  "ENT Specialist",
-  "Ophthalmologist"
-];
 
 const registerValidation = [
   body("fullName")
@@ -80,12 +69,39 @@ const registerValidation = [
         throw new Error("specialty is required when role is Doctor");
       }
 
-      if (!DOCTOR_SPECIALTIES.includes(specialty)) {
+      const resolvedSpecialty = resolveDoctorSpecialty(specialty);
+      if (!resolvedSpecialty) {
         throw new Error(`specialty must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`);
+      }
+
+      req.body.specialty = resolvedSpecialty;
+
+      return true;
+    }),
+  body("licenseNumber")
+    .optional()
+    .isString()
+    .withMessage("licenseNumber must be a string")
+    .bail()
+    .trim()
+    .custom((licenseNumber, { req }) => {
+      const role = req.body.role || "patient";
+
+      if (role !== "Doctor") {
+        return true;
+      }
+
+      if (!licenseNumber) {
+        throw new Error("licenseNumber is required when role is Doctor");
       }
 
       return true;
     }),
+  body("qualification")
+    .optional()
+    .isString()
+    .withMessage("qualification must be a string")
+    .trim(),
   validateRequest
 ];
 
@@ -121,6 +137,18 @@ router.post("/refresh", refreshValidation, authController.refresh);
 router.post("/logout", authMiddleware, authController.logout);
 router.get("/me", authMiddleware, authController.me);
 router.get("/validate-token", authMiddleware, authController.validateToken);
+router.get("/users", authMiddleware, roleMiddleware("Admin"), authController.listUsers);
+router.get("/internal/users/:id", internalServiceAuth, authController.getInternalUserById);
+router.patch(
+  "/internal/users/:id",
+  internalServiceAuth,
+  [
+    body("fullName").optional().isString().trim().isLength({ min: 3, max: 120 }),
+    body("phoneNumber").optional().isString().trim().matches(/^\+?[0-9]{9,15}$/),
+    validateRequest
+  ],
+  authController.updateInternalUserById
+);
 
 router.get("/patient-only", authMiddleware, roleMiddleware("patient"), (req, res) => {
   return res.status(200).json({

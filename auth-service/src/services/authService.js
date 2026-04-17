@@ -1,28 +1,222 @@
 const bcrypt = require("bcrypt");
 const User = require("../models/User");
 const ApiError = require("../utils/ApiError");
+const env = require("../config/env");
 const {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken
 } = require("../utils/token");
+const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doctorSpecialties");
 
 const normalizeIdentifier = (identifier) => identifier.trim().toLowerCase();
 const normalizeNic = (nic) => nic.trim().toUpperCase();
-const normalizePhoneNumber = (phoneNumber) => phoneNumber.trim();
+const normalizePhoneNumber = (phoneNumber) => {
+  const raw = String(phoneNumber || "").trim();
+  const hasLeadingPlus = raw.startsWith("+");
+  const digits = raw.replace(/\D/g, "");
 
-const DOCTOR_SPECIALTIES = [
-  "General Physician",
-  "Cardiologist",
-  "Dermatologist",
-  "Neurologist",
-  "Orthopedic",
-  "Pediatrician",
-  "Gynecologist",
-  "Psychiatrist",
-  "ENT Specialist",
-  "Ophthalmologist"
-];
+  if (!digits) {
+    throw new ApiError(400, "Phone number is required");
+  }
+
+  // Accept 07XXXXXXXX, 7XXXXXXXX, 94XXXXXXXXX, or +94XXXXXXXXX and store uniformly.
+  if (digits.length === 10 && digits.startsWith("0")) {
+    return `+94${digits.slice(1)}`;
+  }
+
+  if (digits.length === 9 && digits.startsWith("7")) {
+    return `+94${digits}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith("94")) {
+    return `+${digits}`;
+  }
+
+  if (hasLeadingPlus && digits.length === 11 && digits.startsWith("94")) {
+    return `+${digits}`;
+  }
+
+  throw new ApiError(
+    400,
+    "Invalid phone number format. Use 07XXXXXXXX, 7XXXXXXXX, 94XXXXXXXXX, or +94XXXXXXXXX"
+  );
+};
+
+const sendWelcomeEmail = async ({ email, phoneNumber, fullName, role }) => {
+  if (!email) {
+    return false;
+  }
+
+  const message =
+    `Hello ${fullName || "there"}, welcome to HealthLink. ` +
+    `Your ${role || "user"} account is ready and you can start using the platform.`;
+
+  try {
+    const response = await fetch(`${env.notificationServiceUrl}/api/notifications/send-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        to: email,
+        toPhone: phoneNumber || null,
+        subject: "Welcome to HealthLink",
+        templateType: "custom",
+        message
+      }),
+      signal: AbortSignal.timeout(env.requestTimeoutMs)
+    });
+
+    if (!response.ok) {
+      const payload = await response.text();
+      console.error(`Welcome email dispatch failed: ${response.status} ${payload}`);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Welcome email dispatch failed: ${error.message}`);
+    return false;
+  }
+};
+
+const sendLoginWelcomeEmail = async ({ email, phoneNumber, fullName, role }) => {
+  if (!email) {
+    return false;
+  }
+
+  const message =
+    `Hello ${fullName || "there"}, welcome to HealthLink. ` +
+    `You have successfully logged in to your ${role || "user"} account.`;
+
+  try {
+    const response = await fetch(`${env.notificationServiceUrl}/api/notifications/send-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        to: email,
+        toPhone: phoneNumber || null,
+        subject: "Welcome to HealthLink",
+        templateType: "custom",
+        message
+      }),
+      signal: AbortSignal.timeout(env.requestTimeoutMs)
+    });
+
+    if (!response.ok) {
+      const payload = await response.text();
+      console.error(`Login welcome email dispatch failed: ${response.status} ${payload}`);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Login welcome email dispatch failed: ${error.message}`);
+    return false;
+  }
+};
+
+const getInternalHeaders = () => {
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (env.internalServiceApiKey) {
+    headers["x-internal-api-key"] = env.internalServiceApiKey;
+  }
+
+  return headers;
+};
+
+const provisionPatientProfile = async ({ userId, fullName, phoneNumber }) => {
+  const response = await fetch(`${env.patientServiceUrl}/api/patients/internal/register`, {
+    method: "POST",
+    headers: getInternalHeaders(),
+    body: JSON.stringify({
+      userId,
+      fullName,
+      phone: phoneNumber
+    }),
+    signal: AbortSignal.timeout(env.requestTimeoutMs)
+  });
+
+  if (!response.ok) {
+    const payload = await response.text();
+    throw new ApiError(502, `Failed to provision patient profile: ${payload || response.statusText}`);
+  }
+};
+
+const provisionDoctorProfile = async ({ userId, fullName, specialization, licenseNumber, qualification }) => {
+  const response = await fetch(`${env.doctorServiceUrl}/api/doctors/internal/register`, {
+    method: "POST",
+    headers: getInternalHeaders(),
+    body: JSON.stringify({
+      userId,
+      fullName,
+      specialization,
+      licenseNumber,
+      qualification: qualification || ""
+    }),
+    signal: AbortSignal.timeout(env.requestTimeoutMs)
+  });
+
+  if (!response.ok) {
+    const payload = await response.text();
+    throw new ApiError(502, `Failed to provision doctor profile: ${payload || response.statusText}`);
+  }
+};
+
+const ensureRoleProfileProvisioned = async (user) => {
+  const role = String(user?.role || "").trim();
+
+  if (role === "patient") {
+    const response = await fetch(`${env.patientServiceUrl}/api/patients/internal/register`, {
+      method: "POST",
+      headers: getInternalHeaders(),
+      body: JSON.stringify({
+        userId: String(user._id),
+        fullName: user.fullName,
+        phone: user.phoneNumber
+      }),
+      signal: AbortSignal.timeout(env.requestTimeoutMs)
+    });
+
+    if (response.ok || response.status === 409) {
+      return;
+    }
+
+    const payload = await response.text();
+    throw new ApiError(502, `Failed to ensure patient profile: ${payload || response.statusText}`);
+  }
+
+  if (role === "Doctor") {
+    const fallbackSpecialty = resolveDoctorSpecialty(user.specialty || "") || "General Physician";
+    const fallbackLicense = `AUTO-${String(user._id).slice(-10).toUpperCase()}`;
+
+    const response = await fetch(`${env.doctorServiceUrl}/api/doctors/internal/register`, {
+      method: "POST",
+      headers: getInternalHeaders(),
+      body: JSON.stringify({
+        userId: String(user._id),
+        fullName: user.fullName,
+        specialization: fallbackSpecialty,
+        licenseNumber: fallbackLicense,
+        qualification: ""
+      }),
+      signal: AbortSignal.timeout(env.requestTimeoutMs)
+    });
+
+    if (response.ok || response.status === 409) {
+      return;
+    }
+
+    const payload = await response.text();
+    throw new ApiError(502, `Failed to ensure doctor profile: ${payload || response.statusText}`);
+  }
+};
 
 const issueTokensForUser = async (user) => {
   const accessToken = generateAccessToken(user);
@@ -38,15 +232,32 @@ const issueTokensForUser = async (user) => {
   };
 };
 
-const register = async ({ fullName, nic, phoneNumber, username, email, password, role, specialty }) => {
+const register = async ({
+  fullName,
+  nic,
+  phoneNumber,
+  username,
+  email,
+  password,
+  role,
+  specialty,
+  licenseNumber,
+  qualification
+}) => {
   const resolvedRole = role || "patient";
+  let resolvedSpecialty = null;
 
   if (resolvedRole === "Doctor") {
     if (!specialty) {
       throw new ApiError(400, "specialty is required when role is Doctor");
     }
 
-    if (!DOCTOR_SPECIALTIES.includes(specialty.trim())) {
+    if (!licenseNumber) {
+      throw new ApiError(400, "licenseNumber is required when role is Doctor");
+    }
+
+    resolvedSpecialty = resolveDoctorSpecialty(specialty);
+    if (!resolvedSpecialty) {
       throw new ApiError(400, `specialty must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`);
     }
   }
@@ -93,11 +304,51 @@ const register = async ({ fullName, nic, phoneNumber, username, email, password,
     email: normalizedEmail,
     passwordHash: password,
     role: resolvedRole,
-    specialty: resolvedRole === "Doctor" ? specialty.trim() : null
+    specialty: resolvedRole === "Doctor" ? resolvedSpecialty : null
   });
+
+  try {
+    if (resolvedRole === "patient") {
+      await provisionPatientProfile({
+        userId: String(user._id),
+        fullName: user.fullName,
+        phoneNumber: user.phoneNumber
+      });
+    }
+
+    if (resolvedRole === "Doctor") {
+      await provisionDoctorProfile({
+        userId: String(user._id),
+        fullName: user.fullName,
+        specialization: resolvedSpecialty,
+        licenseNumber: String(licenseNumber).trim(),
+        qualification: qualification || ""
+      });
+    }
+  } catch (provisionError) {
+    await User.deleteOne({ _id: user._id });
+
+    if (provisionError instanceof ApiError) {
+      throw provisionError;
+    }
+
+    throw new ApiError(502, "Account created but profile provisioning failed. Please try again.");
+  }
 
   const userWithSecrets = await User.findById(user._id).select("+passwordHash +refreshTokenHash");
   const tokens = await issueTokensForUser(userWithSecrets);
+
+  const welcomeSent = await sendWelcomeEmail({
+    email: user.email,
+    phoneNumber: user.phoneNumber,
+    fullName: user.fullName,
+    role: user.role
+  });
+
+  if (welcomeSent) {
+    userWithSecrets.welcomeEmailSentAt = new Date();
+    await userWithSecrets.save();
+  }
 
   return {
     user: user.toSafeObject(),
@@ -131,7 +382,23 @@ const login = async ({ username, password }) => {
     throw new ApiError(401, "Invalid credentials");
   }
 
+  await ensureRoleProfileProvisioned(user);
+
   const tokens = await issueTokensForUser(user);
+
+  if (!user.loginWelcomeEmailSentAt) {
+    const loginWelcomeSent = await sendLoginWelcomeEmail({
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+      fullName: user.fullName,
+      role: user.role
+    });
+
+    if (loginWelcomeSent) {
+      user.loginWelcomeEmailSentAt = new Date();
+      await user.save();
+    }
+  }
 
   return {
     user: user.toSafeObject(),
@@ -193,10 +460,95 @@ const getMe = async ({ userId }) => {
   return user.toSafeObject();
 };
 
+const listUsers = async ({ role }) => {
+  const filter = {};
+
+  if (role) {
+    const normalized = String(role).trim().toLowerCase();
+    if (normalized === "doctor") {
+      filter.role = "Doctor";
+    } else if (normalized === "admin") {
+      filter.role = "Admin";
+    } else if (normalized === "patient") {
+      filter.role = "patient";
+    }
+  }
+
+  const users = await User.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(500);
+
+  return users.map((user) => user.toSafeObject());
+};
+
+const getInternalUserById = async ({ userId }) => {
+  const user = await User.findById(userId);
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  return {
+    id: user._id.toString(),
+    email: user.email,
+    phoneNumber: user.phoneNumber,
+    fullName: user.fullName,
+    role: user.role,
+    isActive: Boolean(user.isActive)
+  };
+};
+
+const updateInternalUserById = async ({ userId, payload }) => {
+  const user = await User.findById(userId);
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  const nextFullName = Object.prototype.hasOwnProperty.call(payload, "fullName")
+    ? String(payload.fullName || "").trim()
+    : null;
+
+  const nextPhoneNumber = Object.prototype.hasOwnProperty.call(payload, "phoneNumber")
+    ? normalizePhoneNumber(payload.phoneNumber)
+    : null;
+
+  if (nextPhoneNumber && nextPhoneNumber !== user.phoneNumber) {
+    const existingByPhone = await User.findOne({
+      phoneNumber: nextPhoneNumber,
+      _id: { $ne: user._id }
+    });
+
+    if (existingByPhone) {
+      throw new ApiError(409, "A user with this phone number already exists");
+    }
+
+    user.phoneNumber = nextPhoneNumber;
+  }
+
+  if (nextFullName) {
+    user.fullName = nextFullName;
+  }
+
+  await user.save();
+
+  return {
+    id: user._id.toString(),
+    email: user.email,
+    phoneNumber: user.phoneNumber,
+    fullName: user.fullName,
+    role: user.role,
+    isActive: Boolean(user.isActive)
+  };
+};
+
 module.exports = {
   register,
   login,
   refresh,
   logout,
-  getMe
+  getMe,
+  listUsers,
+  getInternalUserById,
+  updateInternalUserById
 };

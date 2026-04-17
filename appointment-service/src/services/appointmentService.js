@@ -2,6 +2,7 @@ const axios = require("axios");
 const Appointment = require("../models/appointmentModel");
 const DoctorAvailability = require("../models/doctorAvailabilityModel");
 const env = require("../config/env");
+const { emitAppointmentChanged } = require("../realtime/socketServer");
 
 class ServiceError extends Error {
   constructor(statusCode, message, details = null) {
@@ -59,7 +60,208 @@ const parseDate = (value, fieldName) => {
   return date;
 };
 
+const extractData = (response) => response?.data?.data ?? null;
+
+const assertPatientAccountCanBook = async ({ patientId, headers, user }) => {
+  if (user.role !== "patient") {
+    return;
+  }
+
+  try {
+    const profileResponse = await httpClient.get(`${env.patientServiceUrl}/api/patients/profile`, {
+      headers
+    });
+
+    const profile = extractData(profileResponse) || {};
+    const status = String(profile.status || "active").toLowerCase();
+
+    if (["inactive", "suspended"].includes(status)) {
+      throw new ServiceError(403, `Booking is not allowed because your account is ${status}. Please contact support.`);
+    }
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      throw error;
+    }
+
+    const statusCode = Number(error?.response?.status || 0);
+    if (statusCode === 401 || statusCode === 403) {
+      throw new ServiceError(403, "Booking is not allowed for this account.");
+    }
+
+    if (statusCode === 404) {
+      throw new ServiceError(404, "Patient profile not found. Complete profile setup before booking.");
+    }
+
+    throw new ServiceError(502, "Could not verify patient account status before booking", {
+      reason: error?.message || "unknown error",
+      patientId
+    });
+  }
+};
+
 const hasOverlap = (leftStart, leftEnd, rightStart, rightEnd) => leftStart < rightEnd && leftEnd > rightStart;
+
+const parseTimeToMinutes = (value) => {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]) * 60 + Number(match[2]);
+};
+
+const WEEKDAY_TO_INDEX = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6
+};
+
+const getZonedDateParts = (date, timeZone) => {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+
+  const parts = formatter.formatToParts(date);
+  const weekdayToken = parts.find((part) => part.type === "weekday")?.value;
+  const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value || 0);
+
+  return {
+    weekday: WEEKDAY_TO_INDEX[weekdayToken] ?? date.getUTCDay(),
+    minutes: hour * 60 + minute
+  };
+};
+
+const fetchDoctorScheduleProfile = async ({ doctorId, headers }) => {
+  try {
+    const response = await httpClient.get(`${env.doctorServiceUrl}/api/doctors/${encodeURIComponent(doctorId)}`, {
+      headers
+    });
+    return extractData(response);
+  } catch (error) {
+    if (env.allowDoctorFallback) {
+      return null;
+    }
+
+    throw new ServiceError(502, "Unable to fetch doctor schedule", {
+      reason: error?.response?.data?.message || error.message
+    });
+  }
+};
+
+const evaluateDoctorSchedule = ({ doctorProfile, scheduledAt, durationMinutes }) => {
+  if (!doctorProfile) {
+    return {
+      available: env.allowDoctorFallback,
+      reason: "Doctor schedule is unavailable"
+    };
+  }
+
+  const requestedStart = parseDate(scheduledAt, "scheduledAt");
+  const requestedEnd = new Date(requestedStart.getTime() + durationMinutes * 60000);
+
+  const unavailablePeriods = Array.isArray(doctorProfile.unavailablePeriods)
+    ? doctorProfile.unavailablePeriods
+    : [];
+
+  const blockedByUnavailablePeriod = unavailablePeriods.some((period) => {
+    const from = new Date(period.from);
+    const to = new Date(period.to);
+
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return false;
+    }
+
+    return hasOverlap(requestedStart, requestedEnd, from, to);
+  });
+
+  if (blockedByUnavailablePeriod) {
+    return {
+      available: false,
+      reason: "Doctor is unavailable during the selected period"
+    };
+  }
+
+  const slots = Array.isArray(doctorProfile.availabilitySlots) ? doctorProfile.availabilitySlots : [];
+  const absoluteSlots = slots.filter((slot) => slot?.startAt && slot?.endAt);
+  const weeklySlots = slots.filter((slot) => slot?.dayOfWeek != null && slot?.startTime && slot?.endTime);
+
+  if (absoluteSlots.length > 0) {
+    const matchesAbsoluteSlot = absoluteSlots.some((slot) => {
+      const startAt = new Date(slot.startAt);
+      const endAt = new Date(slot.endAt);
+      if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+        return false;
+      }
+      return startAt <= requestedStart && endAt >= requestedEnd;
+    });
+
+    if (!matchesAbsoluteSlot) {
+      return {
+        available: false,
+        reason: "Selected time does not match the doctor's available slots"
+      };
+    }
+  }
+
+  const timeZone = String(doctorProfile?.workingHours?.timezone || "Asia/Colombo");
+  const startParts = getZonedDateParts(requestedStart, timeZone);
+  const endParts = getZonedDateParts(requestedEnd, timeZone);
+
+  if (startParts.weekday !== endParts.weekday) {
+    return {
+      available: false,
+      reason: "Selected time spans across multiple days in doctor's timezone"
+    };
+  }
+
+  const startMinutes = startParts.minutes;
+  const endMinutes = endParts.minutes;
+
+  if (weeklySlots.length > 0) {
+    const matchesWeeklySlot = weeklySlots.some((slot) => {
+      const slotDay = Number(slot.dayOfWeek);
+      const slotStart = parseTimeToMinutes(slot.startTime);
+      const slotEnd = parseTimeToMinutes(slot.endTime);
+
+      if (!Number.isInteger(slotDay) || slotStart == null || slotEnd == null) {
+        return false;
+      }
+
+      return slotDay === startParts.weekday && startMinutes >= slotStart && endMinutes <= slotEnd;
+    });
+
+    if (!matchesWeeklySlot) {
+      return {
+        available: false,
+        reason: "Selected time is outside doctor's weekly availability slots"
+      };
+    }
+  }
+
+  const hasExplicitSlots = absoluteSlots.length > 0 || weeklySlots.length > 0;
+  if (!hasExplicitSlots) {
+    const workStart = parseTimeToMinutes(doctorProfile?.workingHours?.start || "09:00");
+    const workEnd = parseTimeToMinutes(doctorProfile?.workingHours?.end || "17:00");
+
+    if (workStart != null && workEnd != null && (startMinutes < workStart || endMinutes > workEnd)) {
+      return {
+        available: false,
+        reason: "Selected time is outside doctor's working hours"
+      };
+    }
+  }
+
+  return { available: true, reason: "" };
+};
 
 // CORE: Check for existing appointment conflicts
 const hasDoctorAppointmentConflict = async ({ doctorId, scheduledAt, durationMinutes, excludeAppointmentId }) => {
@@ -87,24 +289,12 @@ const hasDoctorAppointmentConflict = async ({ doctorId, scheduledAt, durationMin
 
 // CORE: Check against local doctor availability slots
 const isWithinDoctorAvailability = async ({ doctorId, scheduledAt, durationMinutes }) => {
-  const requestedStart = parseDate(scheduledAt, "scheduledAt");
-  const requestedEnd = new Date(requestedStart.getTime() + durationMinutes * 60000);
-
-  // If no availability is defined at all, we treat it as "unmanaged" (available) 
-  // ONLY IF env.allowDoctorFallback is true. Otherwise, we require explicit slots.
-  const anyAvailabilityDefined = await DoctorAvailability.exists({ doctorId });
-
-  if (!anyAvailabilityDefined) {
-    return env.allowDoctorFallback; 
-  }
-
-  const matchingSlot = await DoctorAvailability.findOne({
+  const doctorProfile = await fetchDoctorScheduleProfile({
     doctorId,
-    startAt: { $lte: requestedStart },
-    endAt: { $gte: requestedEnd }
+    headers: {}
   });
 
-  return Boolean(matchingSlot);
+  return evaluateDoctorSchedule({ doctorProfile, scheduledAt, durationMinutes });
 };
 
 const assertDoctorSlotAvailable = async ({ doctorId, scheduledAt, durationMinutes, excludeAppointmentId }) => {
@@ -127,8 +317,8 @@ const assertDoctorSlotAvailable = async ({ doctorId, scheduledAt, durationMinute
     durationMinutes
   });
 
-  if (!withinAvailability) {
-    throw new ServiceError(409, "Unavailable: Requested time is outside doctor's set availability");
+  if (!withinAvailability.available) {
+    throw new ServiceError(409, withinAvailability.reason || "Unavailable: Requested time is outside doctor's set availability");
   }
 };
 
@@ -146,8 +336,53 @@ const checkExternalDoctorAvailability = async ({ doctorId, scheduledAt, duration
   }
 };
 
+const fetchUserContactFromAuth = async (userId) => {
+  if (!userId || !env.authServiceUrl || !env.internalServiceApiKey) {
+    return null;
+  }
+
+  try {
+    const response = await httpClient.get(
+      `${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}`,
+      {
+        headers: {
+          "x-internal-api-key": env.internalServiceApiKey
+        }
+      }
+    );
+
+    return response.data?.data || null;
+  } catch (error) {
+    return null;
+  }
+};
+
+const resolveAppointmentNotificationContext = async ({ appointment, notificationContext }) => {
+  const baseContext = notificationContext && typeof notificationContext === "object" ? notificationContext : {};
+
+  const needsPatientLookup = !baseContext.patientEmail || !baseContext.patientName || !baseContext.patientPhone;
+  const needsDoctorLookup = !baseContext.doctorEmail || !baseContext.doctorName || !baseContext.doctorPhone;
+
+  const [patientContact, doctorContact] = await Promise.all([
+    needsPatientLookup ? fetchUserContactFromAuth(appointment.patientId) : Promise.resolve(null),
+    needsDoctorLookup ? fetchUserContactFromAuth(appointment.doctorId) : Promise.resolve(null)
+  ]);
+
+  return {
+    to: baseContext.to,
+    toPhone: baseContext.toPhone,
+    patientEmail: baseContext.patientEmail || patientContact?.email || null,
+    patientPhone: baseContext.patientPhone || patientContact?.phoneNumber || null,
+    doctorEmail: baseContext.doctorEmail || doctorContact?.email || null,
+    doctorPhone: baseContext.doctorPhone || doctorContact?.phoneNumber || null,
+    patientName: baseContext.patientName || patientContact?.fullName || "Patient",
+    doctorName: baseContext.doctorName || doctorContact?.fullName || "Doctor",
+    message: baseContext.message || ""
+  };
+};
+
 // UPSTREAM: Notify Payment and Notification services
-const notifyExternalSystems = async ({ appointment, headers }) => {
+const notifyExternalSystems = async ({ appointment, headers, notificationContext = {} }) => {
   const payload = {
     appointmentId: appointment._id.toString(),
     patientId: appointment.patientId,
@@ -168,28 +403,90 @@ const notifyExternalSystems = async ({ appointment, headers }) => {
     }, { headers }).catch(e => console.error("Payment notification failed", e.message))
   );
 
-  // Send Notification
-  tasks.push(
-    httpClient.post(`${env.notificationServiceUrl}/api/notifications/send`, {
-      recipientId: payload.patientId,
-      type: "APPOINTMENT_CONFIRMATION",
-      data: payload
-    }, { headers }).catch(e => console.error("Notification failed", e.message))
-  );
+  const resolvedNotificationContext = await resolveAppointmentNotificationContext({
+    appointment,
+    notificationContext
+  });
+
+  const to = resolvedNotificationContext.to;
+  const toPhone = resolvedNotificationContext.toPhone;
+  const patientEmail = resolvedNotificationContext.patientEmail;
+  const patientPhone = resolvedNotificationContext.patientPhone;
+  const doctorEmail = resolvedNotificationContext.doctorEmail;
+  const doctorPhone = resolvedNotificationContext.doctorPhone;
+
+  if (to || toPhone || patientEmail || patientPhone || doctorEmail || doctorPhone) {
+    tasks.push(
+      httpClient.post(`${env.notificationServiceUrl}/api/notifications/appointment-confirmation`, {
+        to,
+        toPhone,
+        patientEmail,
+        patientPhone,
+        doctorEmail,
+        doctorPhone,
+        patientName: resolvedNotificationContext.patientName,
+        doctorName: resolvedNotificationContext.doctorName,
+        consultationDate: new Date(appointment.scheduledAt).toISOString(),
+        appointmentId: payload.appointmentId,
+        message: resolvedNotificationContext.message
+      }, { headers }).catch(e => console.error("Notification failed", e.message))
+    );
+  }
 
   await Promise.allSettled(tasks);
+};
+
+const ensureTelemedicineSession = async ({ appointment, headers }) => {
+  if (String(appointment.status) !== "confirmed") {
+    return;
+  }
+
+  try {
+    await httpClient.post(
+      `${env.telemedicineServiceUrl}/api/telemedicine/session`,
+      {
+        appointmentId: appointment._id.toString(),
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId
+      },
+      { headers }
+    );
+  } catch (error) {
+    // Best-effort integration so appointment confirmation remains successful.
+  }
 };
 
 // API LOGIC: Search Doctors
 const searchDoctors = async ({ specialty, name, availability, headers }) => {
   try {
     const response = await httpClient.get(`${env.doctorServiceUrl}/api/doctors`, {
-      params: { specialty, name, availability },
+      params: { specialization: specialty, specialty, name, availability },
       headers
     });
-    return response.data;
+
+    const doctorList = Array.isArray(response?.data?.data)
+      ? response.data.data
+      : Array.isArray(response?.data)
+        ? response.data
+        : [];
+
+    if (!availability) {
+      return doctorList;
+    }
+
+    const availabilityDate = parseDate(availability, "availability");
+
+    return doctorList.filter((doctor) => {
+      const check = evaluateDoctorSchedule({
+        doctorProfile: doctor,
+        scheduledAt: availabilityDate,
+        durationMinutes: 30
+      });
+
+      return check.available;
+    });
   } catch (error) {
-    if (env.allowDoctorFallback) return { success: true, data: [] };
+    if (env.allowDoctorFallback) return [];
     throw new ServiceError(502, "Unable to search doctors", { reason: error.message });
   }
 };
@@ -230,6 +527,7 @@ const createAppointment = async ({ body, user, headers }) => {
   const durationMinutes = body.durationMinutes || 30;
 
   if (!patientId) throw new ServiceError(400, "patientId is required");
+  await assertPatientAccountCanBook({ patientId, headers, user });
   assertFutureDate(body.scheduledAt, "scheduledAt");
 
   // 1. Conflict & Local Availability Check
@@ -264,7 +562,11 @@ const createAppointment = async ({ body, user, headers }) => {
   });
 
   // 4. Async Notifications
-  await notifyExternalSystems({ appointment, headers });
+  const notificationContext =
+    body.notification && typeof body.notification === "object" ? body.notification : body;
+
+  await notifyExternalSystems({ appointment, headers, notificationContext });
+  emitAppointmentChanged({ action: "created", appointment });
 
   return appointment;
 };
@@ -298,6 +600,7 @@ const rescheduleAppointment = async ({ id, body, user, headers }) => {
   appointment.status = "pending"; // Reset to pending if rescheduled?
   
   await appointment.save();
+  emitAppointmentChanged({ action: "rescheduled", appointment });
   return appointment;
 };
 
@@ -308,6 +611,7 @@ const cancelAppointment = async ({ id, body, user }) => {
   appointment.status = "cancelled";
   appointment.cancelledReason = body.cancelledReason || "Cancelled by user";
   await appointment.save();
+  emitAppointmentChanged({ action: "cancelled", appointment });
   
   return appointment;
 };
@@ -326,12 +630,15 @@ const listDoctorAppointments = async ({ doctorId, user }) => {
   return Appointment.find({ doctorId }).sort({ scheduledAt: -1 });
 };
 
-const updateAppointmentStatus = async ({ id, body, user }) => {
+const updateAppointmentStatus = async ({ id, body, user, headers }) => {
   const appointment = await getAppointmentById({ id, user });
   validateStatusTransition(appointment.status, body.status, user.role);
 
   appointment.status = body.status;
   await appointment.save();
+
+  await ensureTelemedicineSession({ appointment, headers });
+  emitAppointmentChanged({ action: "status-updated", appointment });
   
   return appointment;
 };

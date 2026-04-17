@@ -8,10 +8,11 @@ services:
     volumes:
       - mongo_data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: ["CMD-SHELL", "mongosh --quiet --host 127.0.0.1 --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1 > /dev/null"]
+      interval: 15s
+      timeout: 30s
+      start_period: 40s
+      retries: 5
 
   auth-service:
     build:
@@ -29,6 +30,11 @@ services:
     environment:
       NODE_ENV: development
       PORT: 4000
+      DOCTOR_SERVICE_URL: http://doctor-service:4002
+      PATIENT_SERVICE_URL: http://patient-service:4003
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
+      REQUEST_TIMEOUT_MS: 5000
 
   appointment-service:
     build:
@@ -49,10 +55,121 @@ services:
       NODE_ENV: development
       PORT: 4001
       ALLOW_DOCTOR_FALLBACK: "true"
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       DOCTOR_SERVICE_URL: http://doctor-service:4002
-      PAYMENT_SERVICE_URL: http://host.docker.internal:3004
-      NOTIFICATION_SERVICE_URL: http://host.docker.internal:3005
+      PATIENT_SERVICE_URL: http://patient-service:4003
+      TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
+      PAYMENT_SERVICE_URL: http://payment-service:4006
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
       REQUEST_TIMEOUT_MS: 5000
+
+  payment-service:
+    build:
+      context: ./payment-service
+    image: healthlink-payment-service:local
+    container_name: healthlink-payment-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      appointment-service:
+        condition: service_started
+    ports:
+      - "4006:4006"
+    env_file:
+      - ./payment-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4006
+      APPOINTMENT_SERVICE_URL: http://appointment-service:4001
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
+      DOCTOR_SERVICE_URL: http://doctor-service:4002
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
+      CORS_ORIGIN: http://localhost:3000
+      REQUEST_TIMEOUT_MS: 5000
+      PAYMENT_OTP_EXPIRY_MINUTES: 10
+      PAYMENT_OTP_MAX_ATTEMPTS: 5
+
+  notification-service:
+    build:
+      context: ./notification-service
+    image: healthlink-notification-service:local
+    container_name: healthlink-notification-service
+    restart: unless-stopped
+    depends_on:
+      appointment-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      telemedicine-service:
+        condition: service_started
+    ports:
+      - "4007:4007"
+    env_file:
+      - ./notification-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4007
+      HOST: 0.0.0.0
+      CORS_ORIGIN: http://localhost:3000
+      AUTH_REQUIRED: "false"
+      ALLOWED_SERVICE_CALLERS: appointment-service,doctor-service,payment-service,telemedicine-service
+
+  telemedicine-service:
+    build:
+      context: ./telemedicine-service
+    image: healthlink-telemedicine-service:local
+    container_name: healthlink-telemedicine-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      appointment-service:
+        condition: service_started
+    ports:
+      - "4004:4004"
+    env_file:
+      - ./telemedicine-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4004
+      JWT_SECRET: access_secret_123456789_secure_key_service
+      APPOINTMENT_SERVICE_URL: http://appointment-service:4001
+      VERIFY_APPOINTMENT_WITH_SERVICE: "true"
+      ALLOW_APPOINTMENT_FALLBACK: "false"
+      JITSI_DOMAIN: meet.jit.si
+      CORS_ORIGIN: http://localhost:3000
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
+      REQUEST_TIMEOUT_MS: 5000
+
+  ai-service:
+    build:
+      context: ./ai-service
+    image: healthlink-ai-service:local
+    container_name: healthlink-ai-service
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    ports:
+      - "4005:4005"
+    env_file:
+      - ./ai-service/.env
+    environment:
+      NODE_ENV: development
+      PORT: 4005
+      JWT_SECRET: access_secret_123456789_secure_key_service
+      COHERE_MODEL: command-a-03-2025
+      CORS_ORIGIN: http://localhost:3000
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX_REQUESTS: 10
+      REQUEST_TIMEOUT_MS: 10000
 
   doctor-service:
     build:
@@ -63,6 +180,8 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+      telemedicine-service:
+        condition: service_started
     ports:
       - "4002:4002"
     env_file:
@@ -70,12 +189,15 @@ services:
     environment:
       NODE_ENV: development
       PORT: 4002
-      MONGODB_URI: mongodb://mongo:27017/doctor-db
+      MONGODB_URI: mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/doctor-db?appName=Cluster0
       JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
       APPOINTMENT_SERVICE_URL: http://appointment-service:4001
       PATIENT_SERVICE_URL: http://patient-service:4003
-      TELEMEDICINE_SERVICE_URL: http://host.docker.internal:4004
-      NOTIFICATION_SERVICE_URL: http://host.docker.internal:4005
+      TELEMEDICINE_SERVICE_URL: http://telemedicine-service:4004
+      AI_SERVICE_URL: http://ai-service:4005
+      NOTIFICATION_SERVICE_URL: http://notification-service:4007
       REQUEST_TIMEOUT_MS: 5000
 
   patient-service:
@@ -94,8 +216,11 @@ services:
     environment:
       NODE_ENV: development
       PORT: 4003
-      MONGODB_URI: mongodb://mongo:27017/patient-db
+      MONGODB_URI: mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/patient-db?appName=Cluster0
       JWT_ACCESS_SECRET: access_secret_123456789_secure_key_service
+      AUTH_SERVICE_URL: http://auth-service:4000
+      INTERNAL_SERVICE_API_KEY: healthlink-internal-key
+      AI_SERVICE_URL: http://ai-service:4005
       CORS_ORIGIN: http://localhost:3000
       MAX_REPORT_SIZE_MB: 10
 

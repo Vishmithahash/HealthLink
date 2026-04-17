@@ -111,6 +111,11 @@ const updatePatientStatus = wrap(async (req, res) => {
   return send(res, 200, "Patient status updated successfully", patient);
 });
 
+const listPatientsForAdmin = wrap(async (req, res) => {
+  const patients = await patientService.listPatientsForAdmin({ user: req.user });
+  return send(res, 200, "Patients fetched successfully", patients);
+});
+
 const deleteReport = wrap(async (req, res) => {
   const result = await patientService.removeReport({
     reportId: req.params.reportId,
@@ -133,5 +138,6 @@ module.exports = {
   getPatientPrescriptionsById,
   addPrescriptionForPatient,
   updatePatientStatus,
+  listPatientsForAdmin,
   deleteReport
 };

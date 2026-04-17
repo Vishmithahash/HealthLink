@@ -16,8 +16,12 @@ module.exports = {
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET,
   corsOrigin: process.env.CORS_ORIGIN || "*",
   allowDoctorFallback: process.env.ALLOW_DOCTOR_FALLBACK === "true",
-  doctorServiceUrl: process.env.DOCTOR_SERVICE_URL || "http://localhost:3003",
-  paymentServiceUrl: process.env.PAYMENT_SERVICE_URL || "http://localhost:3004",
-  notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || "http://localhost:3005",
+  authServiceUrl: process.env.AUTH_SERVICE_URL || "http://localhost:4000",
+  internalServiceApiKey: process.env.INTERNAL_SERVICE_API_KEY || "",
+  doctorServiceUrl: process.env.DOCTOR_SERVICE_URL || "http://localhost:4002",
+  patientServiceUrl: process.env.PATIENT_SERVICE_URL || "http://localhost:4003",
+  telemedicineServiceUrl: process.env.TELEMEDICINE_SERVICE_URL || "http://localhost:4004",
+  paymentServiceUrl: process.env.PAYMENT_SERVICE_URL || "http://localhost:4006",
+  notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || "http://localhost:4007",
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 5000)
 };

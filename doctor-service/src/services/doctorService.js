@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Doctor = require("../models/doctorModel");
 const Prescription = require("../models/prescriptionModel");
 const env = require("../config/env");
+const { DOCTOR_SPECIALTIES, resolveDoctorSpecialty } = require("../constants/doctorSpecialties");
 
 class ServiceError extends Error {
   constructor(statusCode, message, details = null) {
@@ -13,6 +14,7 @@ class ServiceError extends Error {
 }
 
 const normalizeRole = (role) => String(role || "").trim().toLowerCase();
+const escapeRegexLiteral = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const requestClient = axios.create({
   timeout: env.requestTimeoutMs
@@ -129,9 +131,124 @@ const validateAvailabilityPayload = (payload) => {
   }
 };
 
+const normalizeDoctorSpecialization = (value) => {
+  const resolved = resolveDoctorSpecialty(value);
+  if (!resolved) {
+    throw new ServiceError(400, `specialization must be one of: ${DOCTOR_SPECIALTIES.join(", ")}`);
+  }
+
+  return resolved;
+};
+
 const getHeaders = (authHeader) => ({
   Authorization: authHeader || ""
 });
+
+const buildTelemedicineJoinUrl = (appointmentId) => {
+  const base = String(env.telemedicineJoinBaseUrl || "").replace(/\/$/, "");
+  if (!base || !appointmentId) {
+    return "";
+  }
+
+  return `${base}/${encodeURIComponent(String(appointmentId))}`;
+};
+
+const getInternalHeaders = () => ({
+  "x-internal-api-key": env.internalServiceApiKey
+});
+
+const fetchUserContactFromAuth = async (userId) => {
+  if (!userId || !env.authServiceUrl || !env.internalServiceApiKey) {
+    return null;
+  }
+
+  try {
+    const response = await requestClient.get(
+      `${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}`,
+      {
+        headers: getInternalHeaders()
+      }
+    );
+
+    return asData(response);
+  } catch (error) {
+    return null;
+  }
+};
+
+const syncAuthDoctorProfile = async ({ userId, fullName }) => {
+  if (!userId || !env.authServiceUrl || !env.internalServiceApiKey) {
+    return;
+  }
+
+  const nextFullName = String(fullName || "").trim();
+  if (!nextFullName) {
+    return;
+  }
+
+  try {
+    await requestClient.patch(
+      `${env.authServiceUrl}/api/auth/internal/users/${encodeURIComponent(String(userId))}`,
+      {
+        fullName: nextFullName
+      },
+      {
+        headers: getInternalHeaders()
+      }
+    );
+  } catch (error) {
+    throw mapAxiosError(error, "Failed to sync doctor profile with auth service");
+  }
+};
+
+const normalizeDoctorTimezone = async (doctor) => {
+  const currentTimezone = String(doctor?.workingHours?.timezone || "").trim();
+  if (!currentTimezone || currentTimezone.toUpperCase() === "UTC") {
+    doctor.workingHours = {
+      ...doctor.workingHours,
+      timezone: "Asia/Colombo"
+    };
+    await doctor.save();
+  }
+
+  return doctor;
+};
+
+const normalizeDoctorTimezoneView = (doctor) => {
+  const plainDoctor = doctor?.toObject ? doctor.toObject() : doctor;
+  const timezone = String(plainDoctor?.workingHours?.timezone || "").trim();
+
+  if (!timezone || timezone.toUpperCase() === "UTC") {
+    return {
+      ...plainDoctor,
+      workingHours: {
+        ...(plainDoctor?.workingHours || {}),
+        timezone: "Asia/Colombo"
+      }
+    };
+  }
+
+  return plainDoctor;
+};
+
+const fetchPatientProfileFromPatientService = async ({ patientId, authHeader }) => {
+  if (!patientId || !env.patientServiceUrl) {
+    return null;
+  }
+
+  try {
+    const response = await requestClient.get(
+      `${env.patientServiceUrl}/api/patients/${encodeURIComponent(String(patientId))}`,
+      {
+        headers: getHeaders(authHeader)
+      }
+    );
+
+    return asData(response);
+  } catch {
+    return null;
+  }
+};
 
 const registerDoctor = async ({ payload, actor }) => {
   const required = ["userId", "fullName", "specialization", "licenseNumber"];
@@ -152,10 +269,15 @@ const registerDoctor = async ({ payload, actor }) => {
   const actorRole = normalizeRole(actor?.role);
   const isAdmin = actorRole === "admin";
 
+  await syncAuthDoctorProfile({
+    userId: payload.userId,
+    fullName: payload.fullName
+  });
+
   const doctor = await Doctor.create({
     userId: String(payload.userId),
     fullName: payload.fullName,
-    specialization: payload.specialization,
+    specialization: normalizeDoctorSpecialization(payload.specialization),
     licenseNumber: payload.licenseNumber,
     qualification: payload.qualification || "",
     experienceYears: payload.experienceYears || 0,
@@ -171,7 +293,9 @@ const registerDoctor = async ({ payload, actor }) => {
 
 const getDoctorProfile = async ({ user }) => {
   assertDoctorOrAdmin(user);
-  return ensureDoctor(user.id);
+  const doctor = await ensureDoctor(user.id);
+  await normalizeDoctorTimezone(doctor);
+  return doctor;
 };
 
 const updateDoctorProfile = async ({ user, payload }) => {
@@ -191,6 +315,21 @@ const updateDoctorProfile = async ({ user, payload }) => {
     "bio"
   ];
 
+  if (Object.prototype.hasOwnProperty.call(payload, "specialization")) {
+    payload.specialization = normalizeDoctorSpecialization(payload.specialization);
+  }
+
+  const nextFullName = Object.prototype.hasOwnProperty.call(payload, "fullName")
+    ? String(payload.fullName || "").trim()
+    : null;
+
+  if (nextFullName) {
+    await syncAuthDoctorProfile({
+      userId: user.id,
+      fullName: nextFullName
+    });
+  }
+
   allowedFields.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(payload, field)) {
       doctor[field] = payload[field];
@@ -205,11 +344,11 @@ const getAllDoctors = async ({ query, user }) => {
   const filters = {};
 
   if (query.specialization) {
-    filters.specialization = { $regex: query.specialization, $options: "i" };
+    filters.specialization = { $regex: escapeRegexLiteral(query.specialization), $options: "i" };
   }
 
   if (query.name) {
-    filters.fullName = { $regex: query.name, $options: "i" };
+    filters.fullName = { $regex: escapeRegexLiteral(query.name), $options: "i" };
   }
 
   const isAdmin = normalizeRole(user?.role) === "admin";
@@ -227,9 +366,11 @@ const getAllDoctors = async ({ query, user }) => {
     filters.verified = true;
   }
 
-  return Doctor.find(filters)
+  const doctors = await Doctor.find(filters)
     .sort({ rating: -1, createdAt: -1 })
     .lean();
+
+  return doctors.map((doctor) => normalizeDoctorTimezoneView(doctor));
 };
 
 const getDoctorById = async ({ id, user }) => {
@@ -245,6 +386,19 @@ const getDoctorById = async ({ id, user }) => {
 
   const isAdmin = normalizeRole(user?.role) === "admin";
   if (!isAdmin && (doctor.status !== "active" || !doctor.verified)) {
+    throw new ServiceError(404, "Doctor not found");
+  }
+
+  return normalizeDoctorTimezoneView(doctor);
+};
+
+const getDoctorDocumentById = async ({ id }) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new ServiceError(400, "Invalid doctor id");
+  }
+
+  const doctor = await Doctor.findById(id);
+  if (!doctor) {
     throw new ServiceError(404, "Doctor not found");
   }
 
@@ -323,19 +477,86 @@ const fetchAppointmentForDoctor = async ({ appointmentId, user, authHeader }) =>
   }
 };
 
-const notifyAppointmentDecision = async ({ appointmentId, status, reason, user, authHeader }) => {
+const notifyAppointmentDecision = async ({
+  appointmentId,
+  patientId,
+  doctorId,
+  status,
+  reason,
+  appointment,
+  telemedicineJoinUrl,
+  user,
+  authHeader,
+  notificationContext = {}
+}) => {
+  const [patientContact, doctorContact] = await Promise.all([
+    fetchUserContactFromAuth(patientId),
+    fetchUserContactFromAuth(doctorId)
+  ]);
+
+  const recipient = notificationContext.patientEmail || notificationContext.to || patientContact?.email;
+
+  if (String(status).toLowerCase() === "confirmed") {
+    const patientName = notificationContext.patientName || patientContact?.fullName || "Patient";
+    const doctorName = notificationContext.doctorName || doctorContact?.fullName || user?.fullName || "Doctor";
+
+    const messageParts = [];
+    if (telemedicineJoinUrl) {
+      messageParts.push(`Telemedicine link: ${telemedicineJoinUrl}`);
+    }
+    if (reason) {
+      messageParts.push(`Reason: ${reason}`);
+    }
+
+    try {
+      await requestClient.post(
+        `${env.notificationServiceUrl}/api/notifications/appointment-confirmation`,
+        {
+          patientEmail: notificationContext.patientEmail || patientContact?.email,
+          patientPhone: notificationContext.patientPhone || patientContact?.phoneNumber || null,
+          doctorEmail: notificationContext.doctorEmail || doctorContact?.email || null,
+          doctorPhone: notificationContext.doctorPhone || doctorContact?.phoneNumber || null,
+          patientName,
+          doctorName,
+          appointmentId,
+          consultationDate: appointment?.scheduledAt
+            ? new Date(appointment.scheduledAt).toISOString()
+            : new Date().toISOString(),
+          joinUrl: telemedicineJoinUrl || "",
+          message: messageParts.join(". "),
+          actorId: user.id
+        },
+        {
+          headers: getHeaders(authHeader)
+        }
+      );
+      return;
+    } catch (error) {
+      // Continue to fallback email flow below.
+    }
+  }
+
+  if (!recipient) {
+    return;
+  }
+
   try {
     await requestClient.post(
-      `${env.notificationServiceUrl}/api/notifications/send`,
+      `${env.notificationServiceUrl}/api/notifications/send-email`,
       {
-        type: "APPOINTMENT_STATUS_UPDATED",
-        recipientRole: "patient",
-        data: {
-          appointmentId,
-          status,
-          reason: reason || "",
-          actorId: user.id
-        }
+        to: recipient,
+        patientPhone: notificationContext.patientPhone || patientContact?.phoneNumber || null,
+        subject: notificationContext.subject || "Appointment Status Update",
+        templateType: "custom",
+        message:
+          notificationContext.message ||
+          `Hello ${patientContact?.fullName || "Patient"}, your appointment ${appointmentId} has been ${status}${
+            reason ? `. Reason: ${reason}` : ""
+          }.`,
+        appointmentId,
+        status,
+        reason: reason || "",
+        actorId: user.id
       },
       {
         headers: getHeaders(authHeader)
@@ -346,13 +567,48 @@ const notifyAppointmentDecision = async ({ appointmentId, status, reason, user, 
   }
 };
 
-const updateAppointmentDecision = async ({ appointmentId, action, reason, user, authHeader }) => {
+const getOrCreateTelemedicineSession = async ({ appointmentId, patientId, doctorId, authHeader }) => {
+  try {
+    const response = await requestClient.get(
+      `${env.telemedicineServiceUrl}/api/telemedicine/session/appointment/${encodeURIComponent(appointmentId)}`,
+      {
+        headers: getHeaders(authHeader)
+      }
+    );
+
+    return asData(response);
+  } catch (error) {
+    if (error.response?.status !== 404) {
+      return null;
+    }
+  }
+
+  try {
+    const createResponse = await requestClient.post(
+      `${env.telemedicineServiceUrl}/api/telemedicine/session`,
+      {
+        appointmentId,
+        patientId,
+        doctorId
+      },
+      {
+        headers: getHeaders(authHeader)
+      }
+    );
+
+    return asData(createResponse);
+  } catch (error) {
+    return null;
+  }
+};
+
+const updateAppointmentDecision = async ({ appointmentId, action, reason, user, authHeader, notificationContext }) => {
   if (normalizeRole(user.role) !== "doctor") {
     throw new ServiceError(403, "Only doctors can accept or reject appointments");
   }
 
   await ensureDoctor(user.id);
-  await fetchAppointmentForDoctor({ appointmentId, user, authHeader });
+  const appointment = await fetchAppointmentForDoctor({ appointmentId, user, authHeader });
 
   const status = action === "accept" ? "confirmed" : "rejected";
 
@@ -367,7 +623,34 @@ const updateAppointmentDecision = async ({ appointmentId, action, reason, user, 
       }
     );
 
-    await notifyAppointmentDecision({ appointmentId, status, reason, user, authHeader });
+    let telemedicineJoinUrl = "";
+    if (status === "confirmed") {
+      const telemedicineSession = await getOrCreateTelemedicineSession({
+        appointmentId,
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId,
+        authHeader
+      });
+
+      telemedicineJoinUrl =
+        buildTelemedicineJoinUrl(appointmentId) ||
+        telemedicineSession?.joinUrl ||
+        telemedicineSession?.meetingUrl ||
+        "";
+    }
+
+    await notifyAppointmentDecision({
+      appointmentId,
+      patientId: appointment.patientId,
+      doctorId: appointment.doctorId,
+      status,
+      reason,
+      appointment,
+      telemedicineJoinUrl,
+      user,
+      authHeader,
+      notificationContext
+    });
 
     return asData(response);
   } catch (error) {
@@ -414,28 +697,28 @@ const getTelemedicineSession = async ({ appointmentId, user, authHeader }) => {
 
   const appointment = await fetchAppointmentForDoctor({ appointmentId, user, authHeader });
 
-  try {
-    const response = await requestClient.get(
-      `${env.telemedicineServiceUrl}/api/telemedicine/sessions/${encodeURIComponent(appointmentId)}`,
-      {
-        headers: getHeaders(authHeader)
-      }
-    );
+  const session = await getOrCreateTelemedicineSession({
+    appointmentId,
+    patientId: appointment.patientId,
+    doctorId: appointment.doctorId,
+    authHeader
+  });
 
+  if (session) {
     return {
       appointment,
-      session: asData(response)
-    };
-  } catch (error) {
-    return {
-      appointment,
-      session: {
-        provider: "fallback",
-        joinUrl: `${env.telemedicineJoinBaseUrl.replace(/\/$/, "")}/${encodeURIComponent(appointmentId)}`,
-        note: "Telemedicine service did not return session details; fallback link generated"
-      }
+      session
     };
   }
+
+  return {
+    appointment,
+    session: {
+      provider: "fallback",
+      joinUrl: buildTelemedicineJoinUrl(appointmentId),
+      note: "Telemedicine service did not return session details; fallback link generated"
+    }
+  };
 };
 
 const validateMedicines = (medicines) => {
@@ -448,6 +731,40 @@ const validateMedicines = (medicines) => {
       throw new ServiceError(400, `medicines[${index}] requires name and dosage`);
     }
   });
+};
+
+const escapeHtml = (value) => {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+};
+
+const formatPrescriptionDate = (value) => {
+  if (!value) {
+    return "N/A";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true
+  }).format(date);
 };
 
 const createPrescription = async ({ payload, user, authHeader }) => {
@@ -494,22 +811,119 @@ const createPrescription = async ({ payload, user, authHeader }) => {
 
   try {
     await requestClient.post(
-      `${env.notificationServiceUrl}/api/notifications/send`,
+      `${env.patientServiceUrl}/api/patients/${encodeURIComponent(String(resolvedPatientId))}/prescriptions`,
       {
-        type: "PRESCRIPTION_ISSUED",
-        recipientId: String(resolvedPatientId),
-        data: {
-          appointmentId,
-          prescriptionId: prescription._id.toString(),
-          doctorId: doctor.userId
-        }
+        appointmentId,
+        doctorId: doctor.userId,
+        medicines,
+        instructions: instructions || "",
+        followUpDate: followUpDate || null,
+        issuedAt: prescription.issuedAt
       },
       {
         headers: getHeaders(authHeader)
       }
     );
-  } catch (error) {
-    // Best-effort notification only.
+  } catch (syncError) {
+    await Prescription.deleteOne({ _id: prescription._id });
+    throw mapAxiosError(syncError, "Failed to sync prescription to Patient Service");
+  }
+
+  let patientContact = await fetchUserContactFromAuth(resolvedPatientId);
+
+  if (!patientContact) {
+    patientContact = await fetchUserContactFromAuth(appointment.patientId);
+  }
+
+  if (!patientContact) {
+    const patientProfile = await fetchPatientProfileFromPatientService({
+      patientId: resolvedPatientId,
+      authHeader
+    });
+
+    if (patientProfile?.userId) {
+      patientContact = await fetchUserContactFromAuth(patientProfile.userId);
+    }
+  }
+
+  const prescriptionRecipient = payload.patientEmail || payload.to || patientContact?.email;
+
+  const medicineSummary = medicines
+    .map((medicine) => {
+      const segments = [
+        `${medicine.name} (${medicine.dosage})`,
+        medicine.frequency ? `Frequency: ${medicine.frequency}` : "",
+        medicine.duration ? `Duration: ${medicine.duration}` : "",
+        medicine.notes ? `Notes: ${medicine.notes}` : ""
+      ].filter(Boolean);
+
+      return segments.join(" | ");
+    })
+    .join("; ");
+
+  const followUpLabel = formatPrescriptionDate(followUpDate || prescription.followUpDate);
+  const issuedAtLabel = formatPrescriptionDate(prescription.issuedAt);
+  const patientLabel = patientContact?.fullName || "Patient";
+
+  const prescriptionMessage =
+    payload.message ||
+    `Hello ${patientLabel}, your prescription has been issued. Appointment ID: ${appointmentId}. Prescription ID: ${prescription._id.toString()}. Medicines: ${medicineSummary}. Instructions: ${instructions || "N/A"}. Follow-up: ${followUpLabel}.`;
+
+  const prescriptionHtml = `
+    <p>Hello ${escapeHtml(patientLabel)},</p>
+    <p>Your prescription has been issued successfully.</p>
+    <p><strong>Appointment ID:</strong> ${escapeHtml(appointmentId)}</p>
+    <p><strong>Prescription ID:</strong> ${escapeHtml(prescription._id.toString())}</p>
+    <p><strong>Issued At:</strong> ${escapeHtml(issuedAtLabel)} (Asia/Colombo)</p>
+    <p><strong>Doctor:</strong> ${escapeHtml(doctor.fullName || "Doctor")}</p>
+    <p><strong>Instructions:</strong> ${escapeHtml(instructions || "N/A")}</p>
+    <p><strong>Follow-up:</strong> ${escapeHtml(followUpLabel)}</p>
+    <p><strong>Medicines:</strong></p>
+    <ul>
+      ${medicines
+        .map(
+          (medicine) => `
+            <li>
+              <strong>${escapeHtml(medicine.name || "N/A")}</strong> (${escapeHtml(medicine.dosage || "N/A")})
+              ${medicine.frequency ? `<div>Frequency: ${escapeHtml(medicine.frequency)}</div>` : ""}
+              ${medicine.duration ? `<div>Duration: ${escapeHtml(medicine.duration)}</div>` : ""}
+              ${medicine.notes ? `<div>Notes: ${escapeHtml(medicine.notes)}</div>` : ""}
+            </li>
+          `
+        )
+        .join("")}
+    </ul>
+  `;
+
+  if (prescriptionRecipient || patientContact?.phoneNumber) {
+    try {
+      await requestClient.post(
+        `${env.notificationServiceUrl}/api/notifications/send`,
+        {
+          type: "APPOINTMENT_STATUS_UPDATED",
+          to: prescriptionRecipient || undefined,
+          data: {
+            to: prescriptionRecipient || undefined,
+            toPhone: payload.patientPhone || patientContact?.phoneNumber || undefined,
+            patientEmail: prescriptionRecipient || undefined,
+            patientPhone: payload.patientPhone || patientContact?.phoneNumber || undefined,
+            patientName: patientContact?.fullName || "Patient",
+            subject: payload.subject || "Prescription Issued",
+            templateType: "custom",
+            message: prescriptionMessage,
+            html: payload.html || prescriptionHtml,
+            appointmentId,
+            prescriptionId: prescription._id.toString(),
+            doctorId: doctor.userId
+          }
+        },
+        {
+          headers: getHeaders(authHeader)
+        }
+      );
+    } catch (error) {
+      // Best-effort notification only.
+    }
   }
 
   return prescription;
@@ -575,7 +989,7 @@ const updateDoctorStatus = async ({ doctorId, status, user }) => {
     throw new ServiceError(400, `status must be one of: ${allowedStatuses.join(", ")}`);
   }
 
-  const doctor = await getDoctorById({ id: doctorId, user });
+  const doctor = await getDoctorDocumentById({ id: doctorId });
   doctor.status = status;
   if (status === "verified") {
     doctor.verified = true;
@@ -590,7 +1004,7 @@ const verifyDoctor = async ({ doctorId, verified, user }) => {
     throw new ServiceError(403, "Only admins can verify doctors");
   }
 
-  const doctor = await getDoctorById({ id: doctorId, user });
+  const doctor = await getDoctorDocumentById({ id: doctorId });
   doctor.verified = Boolean(verified);
 
   if (doctor.verified && doctor.status === "inactive") {

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-service-config
+data:
+  PORT: "4006"
+  CORS_ORIGIN: "http://localhost:3000"
+  UPLOAD_PATH: "uploads"
+  APPOINTMENT_SERVICE_URL: "http://appointment-service"
+  AUTH_SERVICE_URL: "http://auth-service"
+  INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
+  DOCTOR_SERVICE_URL: "http://doctor-service"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
+  REQUEST_TIMEOUT_MS: "5000"
+  DEFAULT_CONSULTATION_FEE: "1000"
+  PAYMENT_OTP_EXPIRY_MINUTES: "10"
+  PAYMENT_OTP_MAX_ATTEMPTS: "5"

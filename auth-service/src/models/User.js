@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const env = require("../config/env");
+const { DOCTOR_SPECIALTIES } = require("../constants/doctorSpecialties");
 
 const userSchema = new mongoose.Schema(
   {
@@ -57,18 +58,7 @@ const userSchema = new mongoose.Schema(
     },
     specialty: {
       type: String,
-      enum: [
-        "General Physician",
-        "Cardiologist",
-        "Dermatologist",
-        "Neurologist",
-        "Orthopedic",
-        "Pediatrician",
-        "Gynecologist",
-        "Psychiatrist",
-        "ENT Specialist",
-        "Ophthalmologist"
-      ],
+      enum: DOCTOR_SPECIALTIES,
       required: function requiredSpecialty() {
         return this.role === "Doctor";
       },
@@ -83,6 +73,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
       select: false
+    },
+    welcomeEmailSentAt: {
+      type: Date,
+      default: null
+    },
+    loginWelcomeEmailSentAt: {
+      type: Date,
+      default: null
     }
   },
   {

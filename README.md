@@ -1,10 +1,14 @@
 # HealthLink
 
-Four microservices are included:
+Microservices included:
 - auth-service
 - appointment-service
 - doctor-service
 - patient-service
+- telemedicine-service
+- ai-service
+- payment-service
+- notification-service
 
 Both are configured to run with MongoDB in Docker Compose and Kubernetes.
 
@@ -24,6 +28,10 @@ Service endpoints:
 - Appointment: http://localhost:4001/health
 - Doctor: http://localhost:4002/health
 - Patient: http://localhost:4003/health
+- Telemedicine: http://localhost:4004/health
+- AI Symptom Checker: http://localhost:4005/health
+- Payment Service: http://localhost:4006/health
+- Notification Service: http://localhost:4007/health
 
 ## Kubernetes Run (Minikube)
 
@@ -35,17 +43,17 @@ Service endpoints:
 	minikube image build -t healthlink-appointment-service:local ./appointment-service
 	minikube image build -t healthlink-doctor-service:local ./doctor-service
 	minikube image build -t healthlink-patient-service:local ./patient-service
+	minikube image build -t healthlink-telemedicine-service:local ./telemedicine-service
+	minikube image build -t healthlink-ai-service:local ./ai-service
+	minikube image build -t healthlink-payment-service:local ./payment-service
+	minikube image build -t healthlink-notification-service:local ./notification-service
 
-3. Apply shared infrastructure and config:
+3. Apply shared infrastructure and config (mandatory before workloads):
+	./scripts/k8s-apply-shared.ps1
+
+	Manual equivalent:
 	kubectl apply -f k8s/mongo.yaml
-	kubectl apply -f k8s/auth-configmap.yaml
-	kubectl apply -f k8s/auth-secret.yaml
-	kubectl apply -f k8s/appointment-configmap.yaml
-	kubectl apply -f k8s/appointment-secret.yaml
-	kubectl apply -f k8s/doctor-configmap.yaml
-	kubectl apply -f k8s/doctor-secret.yaml
-	kubectl apply -f k8s/patient-configmap.yaml
-	kubectl apply -f k8s/patient-secret.yaml
+	kubectl apply -f k8s/apply-all.yaml
 
 4. Apply service workloads:
 	kubectl apply -f auth-service/k8s/deployment.yaml
@@ -56,6 +64,14 @@ Service endpoints:
 	kubectl apply -f doctor-service/k8s/service.yaml
 	kubectl apply -f patient-service/k8s/deployment.yaml
 	kubectl apply -f patient-service/k8s/service.yaml
+	kubectl apply -f telemedicine-service/k8s/deployment.yaml
+	kubectl apply -f telemedicine-service/k8s/service.yaml
+	kubectl apply -f ai-service/k8s/deployment.yaml
+	kubectl apply -f ai-service/k8s/service.yaml
+	kubectl apply -f payment-service/k8s/deployment.yaml
+	kubectl apply -f payment-service/k8s/service.yaml
+	kubectl apply -f notification-service/k8s/deployment.yaml
+	kubectl apply -f notification-service/k8s/service.yaml
 
 5. Verify:
 	kubectl get pods
@@ -66,11 +82,26 @@ Service endpoints:
 	kubectl port-forward svc/appointment-service 4001:80
 	kubectl port-forward svc/doctor-service 4002:80
 	kubectl port-forward svc/patient-service 4003:80
+	kubectl port-forward svc/telemedicine-service 4004:4004
+	kubectl port-forward svc/ai-service 4005:4005
+	kubectl port-forward svc/payment-service 4006:4006
+	kubectl port-forward svc/notification-service 4007:4007
 
 ## Notes
 
 - JWT_ACCESS_SECRET is intentionally the same across auth-service and appointment-service for token verification.
 - JWT_ACCESS_SECRET is intentionally shared with doctor-service for token verification.
 - JWT_ACCESS_SECRET is intentionally shared with patient-service for token verification.
-- In Docker Compose, MongoDB uses internal host mongo.
-- In Kubernetes, MongoDB uses internal service name mongo.
+- JWT_ACCESS_SECRET is intentionally shared with ai-service for token verification.
+- MongoDB URIs are configured as Atlas connection strings with service-specific database names (auth-db, appointment-db, doctor-db, patient-db, telemedicine-db, ai-db, payment-db, notification-db).
+
+## End-to-End Plumbing Check
+
+After deployment and port-forwarding, run:
+
+	./scripts/e2e-notification-plumbing-test.ps1
+
+This validates:
+- modern notification API usage from appointment-service and doctor-service
+- telemedicine completion callback to notification-service
+- notification payment-success and payment-verification endpoint reachability

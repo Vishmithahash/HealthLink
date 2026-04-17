@@ -1,0 +1,6 @@
+version: "2"
+tunnels:
+  payment-webhook:
+    proto: http
+    addr: 4006
+    inspect: true

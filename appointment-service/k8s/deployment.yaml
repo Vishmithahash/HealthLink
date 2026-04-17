@@ -35,11 +35,26 @@ spec:
                 configMapKeyRef:
                   name: appointment-service-config
                   key: REQUEST_TIMEOUT_MS
+            - name: AUTH_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: appointment-service-config
+                  key: AUTH_SERVICE_URL
+            - name: INTERNAL_SERVICE_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: appointment-service-config
+                  key: INTERNAL_SERVICE_API_KEY
             - name: DOCTOR_SERVICE_URL
               valueFrom:
                 configMapKeyRef:
                   name: appointment-service-config
                   key: DOCTOR_SERVICE_URL
+            - name: TELEMEDICINE_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: appointment-service-config
+                  key: TELEMEDICINE_SERVICE_URL
             - name: PAYMENT_SERVICE_URL
               valueFrom:
                 configMapKeyRef:

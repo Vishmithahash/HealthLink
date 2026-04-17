@@ -19,6 +19,10 @@ module.exports = {
   mongoUri: process.env.MONGODB_URI,
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || null,
   jwtSecret: process.env.JWT_SECRET || null,
+  internalServiceApiKey: process.env.INTERNAL_SERVICE_API_KEY || "",
   corsOrigin: process.env.CORS_ORIGIN || "*",
+  authServiceUrl: process.env.AUTH_SERVICE_URL || "http://localhost:4000",
+  requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 5000),
+  aiServiceUrl: process.env.AI_SERVICE_URL || "http://localhost:4005",
   maxReportSizeMb: Number(process.env.MAX_REPORT_SIZE_MB || 10)
 };
