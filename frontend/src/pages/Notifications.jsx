@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bell, CheckCircle, CircleX, CreditCard, Info, RefreshCw, Video } from 'lucide-react';
-import { listLocalNotifications } from '../services/notificationService';
+import { useNavigate } from 'react-router-dom';
+import { getDashboardByRole, getUserInfo } from '../utils/auth';
+import { listLocalNotifications, subscribeToLocalNotifications } from '../services/notificationService';
 
 const Notifications = () => {
+    const navigate = useNavigate();
     const [notifications, setNotifications] = useState([]);
 
     const refresh = () => {
@@ -11,7 +14,25 @@ const Notifications = () => {
 
     useEffect(() => {
         refresh();
+
+        const unsubscribe = subscribeToLocalNotifications(() => {
+            refresh();
+        });
+
+        return () => {
+            unsubscribe();
+        };
     }, []);
+
+    const goBack = () => {
+        if (window.history.length > 1) {
+            navigate(-1);
+            return;
+        }
+
+        const user = getUserInfo();
+        navigate(getDashboardByRole(user?.role || 'patient'));
+    };
 
     const iconByCategory = useMemo(() => ({
         appointment: <CheckCircle className="h-5 w-5 text-blue-500" />,
@@ -52,13 +73,22 @@ const Notifications = () => {
                 <h1 className="text-2xl font-bold text-slate-800 flex items-center">
                     <Bell className="mr-2 h-6 w-6 text-blue-600" /> Notifications
                 </h1>
-                <button
-                    type="button"
-                    onClick={refresh}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
-                >
-                    <RefreshCw className="h-4 w-4" /> Refresh
-                </button>
+                <div className="inline-flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={goBack}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
+                    >
+                        Back
+                    </button>
+                    <button
+                        type="button"
+                        onClick={refresh}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
+                    >
+                        <RefreshCw className="h-4 w-4" /> Refresh
+                    </button>
+                </div>
             </div>
 
             <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
