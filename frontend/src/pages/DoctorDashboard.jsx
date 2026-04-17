@@ -135,7 +135,7 @@ const DoctorDashboard = () => {
   const [patientNameById, setPatientNameById] = useState({});
   const [paymentByAppointment, setPaymentByAppointment] = useState({});
   const [paymentLoading, setPaymentLoading] = useState(false);
-  const [reportLoadingPatientId, setReportLoadingPatientId] = useState("");
+  const [reportLoadingAppointmentId, setReportLoadingAppointmentId] = useState("");
   const [selectedPatientForReports, setSelectedPatientForReports] = useState("");
   const [patientReports, setPatientReports] = useState([]);
   const [recentlyChangedAppointments, setRecentlyChangedAppointments] = useState({});
@@ -693,12 +693,12 @@ const DoctorDashboard = () => {
     }
   };
 
-  const handleViewPatientReports = async (patientId) => {
+  const handleViewPatientReports = async (appointmentId, patientId) => {
     if (!patientId) {
       return;
     }
 
-    setReportLoadingPatientId(String(patientId));
+    setReportLoadingAppointmentId(String(appointmentId || ""));
     setSelectedPatientForReports(String(patientId));
     setError("");
 
@@ -709,8 +709,35 @@ const DoctorDashboard = () => {
       setPatientReports([]);
       setError(extractErrorMessage(err, "Could not fetch patient reports"));
     } finally {
-      setReportLoadingPatientId("");
+      setReportLoadingAppointmentId("");
     }
+  };
+
+  const getReportAssetUrl = (report) => {
+    if (!report) {
+      return "";
+    }
+
+    if (report.fileName) {
+      return `/uploads/reports/${encodeURIComponent(String(report.fileName))}`;
+    }
+
+    const rawPath = String(report.filePath || "").replace(/\\/g, "/");
+    if (!rawPath) {
+      return "";
+    }
+
+    const uploadsMatch = rawPath.match(/(uploads\/reports\/.+)$/i);
+    if (uploadsMatch?.[1]) {
+      const normalized = uploadsMatch[1]
+        .split("/")
+        .map((segment, index) => (index === 0 ? segment : encodeURIComponent(segment)))
+        .join("/");
+      return `/${normalized}`;
+    }
+
+    const fileName = rawPath.split("/").pop();
+    return fileName ? `/uploads/reports/${encodeURIComponent(fileName)}` : "";
   };
 
   const getConsultationJoinAvailability = (appointment) => {
@@ -960,11 +987,11 @@ const DoctorDashboard = () => {
                     )}
                     <div className="inline-flex gap-2 justify-end flex-wrap">
                       <button
-                        onClick={() => handleViewPatientReports(item.patientId)}
-                        disabled={reportLoadingPatientId === String(item.patientId)}
+                        onClick={() => handleViewPatientReports(item._id, item.patientId)}
+                        disabled={reportLoadingAppointmentId === String(item._id)}
                         className="bg-slate-700 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-md px-3 py-1"
                       >
-                        {reportLoadingPatientId === String(item.patientId) ? "Loading Reports..." : "View Reports"}
+                        {reportLoadingAppointmentId === String(item._id) ? "Loading Reports..." : "View Reports"}
                       </button>
                       <button
                         onClick={() => handleJoinConsultation(item)}
@@ -987,13 +1014,42 @@ const DoctorDashboard = () => {
                 <p className="text-sm text-slate-500 mt-2">No reports found for this patient.</p>
               ) : (
                 <ul className="mt-2 space-y-2 text-sm text-slate-700">
-                  {patientReports.map((report) => (
-                    <li key={report._id} className="bg-white border border-slate-200 rounded-md px-3 py-2">
-                      <p className="font-medium">{report.title || report.originalName}</p>
-                      <p className="text-xs text-slate-500">{report.documentType || "general"} | {new Date(report.uploadedAt || report.createdAt).toLocaleString()}</p>
-                      {report.notes ? <p className="text-xs text-slate-600">Notes: {report.notes}</p> : null}
-                    </li>
-                  ))}
+                  {patientReports.map((report) => {
+                    const reportUrl = getReportAssetUrl(report);
+                    const isImage = String(report?.mimeType || "").toLowerCase().startsWith("image/");
+
+                    return (
+                      <li key={report._id} className="bg-white border border-slate-200 rounded-md px-3 py-2">
+                        <p className="font-medium">{report.title || report.originalName}</p>
+                        <p className="text-xs text-slate-500">{report.documentType || "general"} | {new Date(report.uploadedAt || report.createdAt).toLocaleString()}</p>
+                        {report.notes ? <p className="text-xs text-slate-600">Notes: {report.notes}</p> : null}
+
+                        {reportUrl ? (
+                          <div className="mt-2 space-y-2">
+                            {isImage ? (
+                              <img
+                                src={reportUrl}
+                                alt={report.title || report.originalName || "Medical report image"}
+                                className="max-h-56 w-auto rounded border border-slate-200"
+                                loading="lazy"
+                              />
+                            ) : null}
+
+                            <a
+                              href={reportUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex text-xs font-medium text-teal-700 hover:text-teal-800"
+                            >
+                              {isImage ? "Open full image" : "Open report file"}
+                            </a>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-amber-700 mt-2">Report file path is unavailable.</p>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>

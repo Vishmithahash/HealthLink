@@ -14,7 +14,8 @@ import {
   Clock3,
   CheckCircle2,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  X
 } from "lucide-react";
 import { getPlatformHealth, getHomeDoctors } from "../services/homeService";
 import { extractErrorMessage } from "../services/api";
@@ -62,6 +63,9 @@ const Home = () => {
   const [health, setHealth] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [doctorNameFilter, setDoctorNameFilter] = useState("");
+  const [doctorSpecializationFilter, setDoctorSpecializationFilter] = useState("");
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
 
   const loadHomeData = async () => {
     setLoading(true);
@@ -112,11 +116,57 @@ const Home = () => {
     };
   }, [doctors, health]);
 
-  const topDoctors = useMemo(() => {
-    return [...doctors]
-      .sort((a, b) => Number(b?.rating || 0) - Number(a?.rating || 0))
-      .slice(0, 6);
+  const specializationOptions = useMemo(() => {
+    return [...new Set(
+      doctors
+        .map((doctor) => String(doctor?.specialization || "").trim())
+        .filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b));
   }, [doctors]);
+
+  const filteredDoctors = useMemo(() => {
+    const nameNeedle = doctorNameFilter.trim().toLowerCase();
+    const specializationNeedle = doctorSpecializationFilter.trim().toLowerCase();
+
+    return [...doctors]
+      .filter((doctor) => {
+        const name = String(doctor?.fullName || "").toLowerCase();
+        const specialization = String(doctor?.specialization || "").toLowerCase();
+
+        if (nameNeedle && !name.includes(nameNeedle)) {
+          return false;
+        }
+
+        if (specializationNeedle && specialization !== specializationNeedle) {
+          return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        const ratingDiff = Number(b?.rating || 0) - Number(a?.rating || 0);
+        if (ratingDiff !== 0) {
+          return ratingDiff;
+        }
+
+        return String(a?.fullName || "").localeCompare(String(b?.fullName || ""));
+      });
+  }, [doctors, doctorNameFilter, doctorSpecializationFilter]);
+
+  useEffect(() => {
+    if (!selectedDoctor) {
+      return;
+    }
+
+    const onEscape = (event) => {
+      if (event.key === "Escape") {
+        setSelectedDoctor(null);
+      }
+    };
+
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [selectedDoctor]);
 
   const formatLkr = (amount) => {
     const value = Number(amount);
@@ -265,7 +315,7 @@ const Home = () => {
         <section className="mt-12 animate-fade-in">
           <div className="flex items-end justify-between gap-4 mb-5">
             <div>
-              <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Featured Doctors</h2>
+              <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Find Doctors</h2>
             </div>
             <Link
               to="/register"
@@ -275,19 +325,54 @@ const Home = () => {
             </Link>
           </div>
 
+          <div className="rounded-2xl border border-teal-900/40 bg-slate-950/25 p-4 mb-5">
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wide text-teal-200">Search by name</label>
+                <input
+                  type="text"
+                  value={doctorNameFilter}
+                  onChange={(event) => setDoctorNameFilter(event.target.value)}
+                  placeholder="Type doctor name"
+                  className="mt-1 w-full rounded-lg border border-teal-200/35 bg-slate-900/45 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wide text-teal-200">Filter by specialization</label>
+                <select
+                  value={doctorSpecializationFilter}
+                  onChange={(event) => setDoctorSpecializationFilter(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-teal-200/35 bg-slate-900/45 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-teal-400"
+                >
+                  <option value="">All specializations</option>
+                  {specializationOptions.map((specialization) => (
+                    <option key={specialization} value={specialization.toLowerCase()}>
+                      {specialization}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
           {loading ? (
             <div className="home-muted-panel text-sm text-slate-600">Loading doctors...</div>
-          ) : topDoctors.length === 0 ? (
+          ) : filteredDoctors.length === 0 ? (
             <div className="home-muted-panel text-sm text-slate-600">
-              No public doctor profiles available yet. Add active, verified doctors to display them here.
+              No doctors match these filters. Try a different name or specialization.
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {topDoctors.map((doctor) => (
-                <article key={doctor._id || doctor.userId} className="home-doctor-card">
+              {filteredDoctors.map((doctor) => (
+                <button
+                  key={doctor._id || doctor.userId}
+                  type="button"
+                  onClick={() => setSelectedDoctor(doctor)}
+                  className="home-doctor-card text-left"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-base font-semibold text-slate-900">{doctor.fullName || "Doctor"}</p>
+                      <p className="text-base font-semibold text-slate-900 hover:text-teal-700">{doctor.fullName || "Doctor"}</p>
                       <p className="text-sm text-slate-600 mt-0.5 inline-flex items-center gap-1">
                         <Stethoscope className="h-4 w-4" />
                         {doctor.specialization || "General"}
@@ -309,7 +394,7 @@ const Home = () => {
                       {formatLkr(doctor.consultationFee || 0)}
                     </span>
                   </div>
-                </article>
+                </button>
               ))}
             </div>
           )}
@@ -372,6 +457,63 @@ const Home = () => {
           </div>
         </section>
       </main>
+
+      {selectedDoctor ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Close doctor details"
+            className="absolute inset-0 bg-slate-900/70"
+            onClick={() => setSelectedDoctor(null)}
+          />
+          <div className="relative w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">{selectedDoctor.fullName || "Doctor"}</h3>
+                <p className="text-sm text-slate-600 mt-1">{selectedDoctor.specialization || "General"}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedDoctor(null)}
+                className="rounded-md border border-slate-200 p-1.5 text-slate-500 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Consultation Fee</p>
+                  <p className="mt-1 font-semibold text-teal-700">{formatLkr(selectedDoctor.consultationFee || 0)}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Working Hours</p>
+                  <p className="mt-1 font-semibold text-slate-800">
+                    {selectedDoctor?.workingHours?.start || "09:00"} - {selectedDoctor?.workingHours?.end || "17:00"}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">{selectedDoctor?.workingHours?.timezone || "Asia/Colombo"}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Experience</p>
+                  <p className="mt-1 font-semibold text-slate-800">{Number(selectedDoctor?.experienceYears || 0)} years</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Rating</p>
+                  <p className="mt-1 font-semibold text-amber-700">⭐ {Number(selectedDoctor?.rating || 0).toFixed(1)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">About</p>
+                <p className="mt-1 text-sm text-slate-700 leading-relaxed">
+                  {selectedDoctor.bio || "Profile details will be updated by the doctor soon."}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

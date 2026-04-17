@@ -149,6 +149,7 @@ const PatientDashboard = () => {
     notes: "",
     consultationId: ""
   });
+  const doctorFilterRequestRef = useRef(0);
   const reportFileInputRef = useRef(null);
   const minAvailabilityDate = toLocalDateInputValue();
   const accountRestricted = ["inactive", "suspended"].includes(String(patientAccountStatus || "").toLowerCase());
@@ -548,6 +549,7 @@ const PatientDashboard = () => {
     return new Map(entries);
   }, [doctors]);
 
+<<<<<<< HEAD
   const markAppointmentAsRecentlyChanged = (appointmentId) => {
     const normalizedId = String(appointmentId || "").trim();
     if (!normalizedId) {
@@ -564,6 +566,23 @@ const PatientDashboard = () => {
     const changedAt = recentlyChangedAppointments[String(appointmentId || "")];
     return Number.isFinite(changedAt) && Date.now() - changedAt < 5000;
   };
+=======
+  const appointmentsByLatestBooking = useMemo(() => {
+    const toMs = (value) => {
+      const time = new Date(value || 0).getTime();
+      return Number.isFinite(time) ? time : 0;
+    };
+
+    return [...appointments].sort((a, b) => {
+      const createdDiff = toMs(b?.createdAt || b?.updatedAt) - toMs(a?.createdAt || a?.updatedAt);
+      if (createdDiff !== 0) {
+        return createdDiff;
+      }
+
+      return toMs(b?.scheduledAt) - toMs(a?.scheduledAt);
+    });
+  }, [appointments]);
+>>>>>>> origin/dev_danuka
 
   const reportConsultationOptions = useMemo(() => {
     return (Array.isArray(appointments) ? appointments : [])
@@ -634,7 +653,98 @@ const PatientDashboard = () => {
     return [...new Set(doctors.map((doctor) => String(doctor.specialization || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   }, [doctors]);
 
+  const hasActiveDoctorFilters = useMemo(() => {
+    return Boolean(doctorFilters.name.trim() || doctorFilters.specialty || doctorFilters.availability);
+  }, [doctorFilters.name, doctorFilters.specialty, doctorFilters.availability]);
+
+  const isDoctorAvailableAt = (doctor, selectedDateTime) => {
+    if (!selectedDateTime || Number.isNaN(selectedDateTime.getTime())) {
+      return true;
+    }
+
+    const duration = 30;
+    const endDateTime = new Date(selectedDateTime.getTime() + duration * 60000);
+    const timezone = String(doctor?.workingHours?.timezone || "Asia/Colombo");
+    const startParts = getZonedDateParts(selectedDateTime, timezone);
+    const endParts = getZonedDateParts(endDateTime, timezone);
+
+    if (startParts.weekday !== endParts.weekday) {
+      return false;
+    }
+
+    const unavailable = Array.isArray(doctor?.unavailablePeriods) ? doctor.unavailablePeriods : [];
+    const overlapsBlockedPeriod = unavailable.some((period) => {
+      const from = new Date(period.from);
+      const to = new Date(period.to);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        return false;
+      }
+
+      return selectedDateTime < to && endDateTime > from;
+    });
+
+    if (overlapsBlockedPeriod) {
+      return false;
+    }
+
+    const recurringSlots = (Array.isArray(doctor?.availabilitySlots) ? doctor.availabilitySlots : [])
+      .filter((slot) => slot?.dayOfWeek != null && slot?.startTime && slot?.endTime);
+
+    if (recurringSlots.length > 0) {
+      return recurringSlots.some((slot) => {
+        const slotStart = parseTimeToMinutes(slot.startTime);
+        const slotEnd = parseTimeToMinutes(slot.endTime);
+
+        if (slotStart == null || slotEnd == null) {
+          return false;
+        }
+
+        return Number(slot.dayOfWeek) === startParts.weekday
+          && startParts.minutes >= slotStart
+          && endParts.minutes <= slotEnd;
+      });
+    }
+
+    const workStart = parseTimeToMinutes(doctor?.workingHours?.start || "09:00");
+    const workEnd = parseTimeToMinutes(doctor?.workingHours?.end || "17:00");
+
+    if (workStart == null || workEnd == null) {
+      return true;
+    }
+
+    return startParts.minutes >= workStart && endParts.minutes <= workEnd;
+  };
+
+  const applyDoctorFilters = (doctorList, filters) => {
+    const input = Array.isArray(doctorList) ? doctorList : [];
+    const nameNeedle = String(filters?.name || "").trim().toLowerCase();
+    const specializationNeedle = String(filters?.specialty || "").trim().toLowerCase();
+    const availabilityDate = filters?.availability ? new Date(filters.availability) : null;
+    const hasAvailabilityFilter = availabilityDate && !Number.isNaN(availabilityDate.getTime());
+
+    return input.filter((doctor) => {
+      const doctorName = String(doctor?.fullName || "").trim().toLowerCase();
+      const doctorSpecialization = String(doctor?.specialization || "").trim().toLowerCase();
+
+      if (nameNeedle && !doctorName.includes(nameNeedle)) {
+        return false;
+      }
+
+      if (specializationNeedle && doctorSpecialization !== specializationNeedle) {
+        return false;
+      }
+
+      if (hasAvailabilityFilter && !isDoctorAvailableAt(doctor, availabilityDate)) {
+        return false;
+      }
+
+      return true;
+    });
+  };
+
   const loadDoctors = async (filters = doctorFilters) => {
+    const requestId = doctorFilterRequestRef.current + 1;
+    doctorFilterRequestRef.current = requestId;
     setLoadingDoctors(true);
 
     try {
@@ -645,9 +755,17 @@ const PatientDashboard = () => {
       };
 
       const doctorData = await getDoctors(params).catch(() => []);
-      setDoctors(Array.isArray(doctorData?.data) ? doctorData.data : Array.isArray(doctorData) ? doctorData : []);
+      const fetchedDoctors = Array.isArray(doctorData?.data) ? doctorData.data : Array.isArray(doctorData) ? doctorData : [];
+
+      if (requestId !== doctorFilterRequestRef.current) {
+        return;
+      }
+
+      setDoctors(applyDoctorFilters(fetchedDoctors, filters));
     } finally {
-      setLoadingDoctors(false);
+      if (requestId === doctorFilterRequestRef.current) {
+        setLoadingDoctors(false);
+      }
     }
   };
 
@@ -841,6 +959,35 @@ const PatientDashboard = () => {
   useEffect(() => {
     loadDoctors(doctorFilters);
   }, [doctorFilters.name, doctorFilters.specialty, doctorFilters.availability]);
+
+  useEffect(() => {
+    if (!hasActiveDoctorFilters) {
+      return;
+    }
+
+    if (doctorOptions.length === 0) {
+      if (bookingForm.doctorId) {
+        setBookingForm((prev) => ({ ...prev, doctorId: "", specialty: "" }));
+      }
+      return;
+    }
+
+    if (doctorOptions.length === 1) {
+      onDoctorChange(String(doctorOptions[0].id));
+      return;
+    }
+
+    const selectedId = String(bookingForm.doctorId || "");
+    const selectedIsVisible = doctorOptions.some((option) => String(option.id) === selectedId);
+
+    if (!selectedIsVisible && bookingForm.doctorId) {
+      setBookingForm((prev) => ({
+        ...prev,
+        doctorId: "",
+        specialty: doctorFilters.specialty || ""
+      }));
+    }
+  }, [hasActiveDoctorFilters, doctorOptions, bookingForm.doctorId, doctorFilters.specialty]);
 
   const handleBookAppointment = async (event) => {
     event.preventDefault();
@@ -1590,12 +1737,12 @@ const PatientDashboard = () => {
               </tr>
             </thead>
             <tbody>
-              {appointments.length === 0 ? (
+              {appointmentsByLatestBooking.length === 0 ? (
                 <tr>
                   <td className="px-4 py-6 text-slate-500" colSpan={7}>No appointments yet.</td>
                 </tr>
               ) : (
-                appointments.map((appointment) => (
+                appointmentsByLatestBooking.map((appointment) => (
                   <tr key={appointment._id} className="border-t border-slate-100 text-sm">
                     {(() => {
                       const paymentStatus = paymentStatusByAppointment[String(appointment._id)] || appointment.paymentStatus || "pending";
@@ -1654,6 +1801,7 @@ const PatientDashboard = () => {
 
       {paymentModal ? createPortal(paymentModal, document.body) : null}
 
+<<<<<<< HEAD
       {!accountRestricted && activeTab === "book" ? (
         <form onSubmit={handleBookAppointment} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-2xl">
           <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Book Appointment</h2>
@@ -1677,6 +1825,20 @@ const PatientDashboard = () => {
                   value={doctorFilters.name}
                   onChange={(e) => setDoctorFilters((prev) => ({ ...prev, name: e.target.value }))}
                   className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
+=======
+      {activeTab === "book" ? (
+        <div className="max-w-5xl mx-auto space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+            <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Find Doctor</h2>
+            <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_1fr_1fr_auto] gap-3 items-end">
+              <div>
+                <label className="text-sm text-slate-700">Filter by doctor name</label>
+                <input
+                  value={doctorFilters.name}
+                  onChange={(e) => setDoctorFilters((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+                  placeholder="Type doctor name"
+>>>>>>> origin/dev_danuka
                 />
               </div>
               <div>
@@ -1684,7 +1846,11 @@ const PatientDashboard = () => {
                 <select
                   value={doctorFilters.specialty}
                   onChange={(e) => setDoctorFilters((prev) => ({ ...prev, specialty: e.target.value }))}
+<<<<<<< HEAD
                   className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
+=======
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+>>>>>>> origin/dev_danuka
                 >
                   <option value="">All specializations</option>
                   {specialties.map((specialty) => (
@@ -1692,6 +1858,7 @@ const PatientDashboard = () => {
                   ))}
                 </select>
               </div>
+<<<<<<< HEAD
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
               <div>
@@ -1794,6 +1961,101 @@ const PatientDashboard = () => {
           </button>
           </fieldset>
         </form>
+=======
+              <div>
+                <label className="text-sm text-slate-700">Filter by availability</label>
+                <input
+                  type="datetime-local"
+                  value={doctorFilters.availability}
+                  onChange={(e) => setDoctorFilters((prev) => ({ ...prev, availability: e.target.value }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setDoctorFilters({ name: "", specialty: "", availability: "" })}
+                className="text-sm text-teal-700 hover:text-teal-800 xl:mb-1"
+              >
+                Reset filters
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <p className="text-slate-500">
+              Showing {doctorOptions.length} doctor{doctorOptions.length === 1 ? "" : "s"}. If filters return one doctor, it is auto-selected in the booking form.
+              </p>
+              {hasActiveDoctorFilters && doctorOptions.length > 1 ? (
+                <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">
+                  Multiple matches found. Please select one doctor in booking form.
+                </span>
+              ) : null}
+              <span className="inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-teal-700">
+                Selected: {selectedDoctor ? `${selectedDoctor.fullName} - ${selectedDoctor.specialization}` : "No doctor selected"}
+              </span>
+            </div>
+          </div>
+
+          <form onSubmit={handleBookAppointment} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-2xl mx-auto">
+            <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Book Appointment</h2>
+            {bookingRestricted ? (
+              <p className="text-sm text-rose-700 rounded-md border border-rose-200 bg-rose-50 px-3 py-2">
+                Booking is disabled while your account is {patientAccountStatus}. Contact support to reactivate your account.
+              </p>
+            ) : null}
+            <fieldset disabled={bookingRestricted} className="space-y-4 disabled:opacity-60">
+              <div>
+                <label className="text-sm text-slate-700">Doctor</label>
+                <select
+                  required
+                  value={bookingForm.doctorId}
+                  onChange={(e) => onDoctorChange(e.target.value)}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+                >
+                  <option value="">{loadingDoctors ? "Loading doctors..." : "Select doctor"}</option>
+                  {doctorOptions.map((doctor) => (
+                    <option key={doctor.id} value={doctor.id}>{doctor.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-slate-700">Date and Time</label>
+                <input
+                  required
+                  type="datetime-local"
+                  value={bookingForm.scheduledAt}
+                  onChange={(e) => setBookingForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-slate-500">{bookingAvailabilityHint}</p>
+              </div>
+              <div>
+                <label className="text-sm text-slate-700">Duration (minutes)</label>
+                <input
+                  type="number"
+                  min="10"
+                  max="180"
+                  value={bookingForm.durationMinutes}
+                  onChange={(e) => setBookingForm((prev) => ({ ...prev, durationMinutes: Number(e.target.value || 30) }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-slate-700">Reason</label>
+                <textarea
+                  rows={3}
+                  value={bookingForm.reason}
+                  onChange={(e) => setBookingForm((prev) => ({ ...prev, reason: e.target.value }))}
+                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
+                  placeholder="Briefly describe symptoms"
+                />
+              </div>
+              <button disabled={booking} type="submit" className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">
+                {booking ? "Submitting..." : "Submit Appointment"}
+              </button>
+            </fieldset>
+          </form>
+        </div>
+>>>>>>> origin/dev_danuka
       ) : null}
 
       {!accountRestricted && activeTab === "profile" ? (
@@ -1932,24 +2194,80 @@ const PatientDashboard = () => {
         </div>
       ) : null}
 
+<<<<<<< HEAD
       {!accountRestricted && activeTab === "prescriptions" ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+=======
+      {activeTab === "prescriptions" ? (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-6">
+>>>>>>> origin/dev_danuka
           <h2 className="font-semibold text-slate-900 inline-flex items-center gap-2"><FileText className="h-5 w-5 text-teal-700" /> Prescriptions</h2>
-          <ul className="mt-3 space-y-2 text-sm text-slate-700">
-            {prescriptions.length === 0 ? <li>No prescriptions yet.</li> : prescriptions.map((item) => (
-              <li key={item._id} className="border-b border-slate-100 pb-2">
-                <p className="font-medium">Appointment: {resolveAppointmentSummary(item.appointmentId)}</p>
-                <p className="text-slate-600">Doctor: {resolveDoctorName(item.doctorId)}</p>
-                <p className="text-slate-600">Issued: {item.issuedAt ? new Date(item.issuedAt).toLocaleString() : "N/A"}</p>
-                <p className="text-slate-600">Medicines: {(item.medicines || []).map((m) => `${m.name} (${m.dosage})`).join(", ") || "N/A"}</p>
-                {(item.medicines || []).length > 0 ? (
-                  <p className="text-slate-600">Details: {(item.medicines || []).map((m) => `${m.frequency || "-"} | ${m.duration || "-"} | ${m.notes || "-"}`).join(" ; ")}</p>
-                ) : null}
-                <p className="text-slate-600">Instructions: {item.instructions || "N/A"}</p>
-                <p className="text-slate-600">Follow-up: {item.followUpDate ? new Date(item.followUpDate).toLocaleDateString() : "N/A"}</p>
-              </li>
-            ))}
-          </ul>
+
+          {prescriptions.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-600">No prescriptions yet.</p>
+          ) : (
+            <div className="mt-4 space-y-4">
+              {prescriptions.map((item) => {
+                const medicines = Array.isArray(item.medicines) ? item.medicines : [];
+
+                return (
+                  <article key={item._id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-base font-semibold text-slate-900">{resolveAppointmentSummary(item.appointmentId)}</p>
+                        <p className="text-sm text-slate-600 mt-1">Doctor: <span className="font-medium text-slate-700">{resolveDoctorName(item.doctorId)}</span></p>
+                      </div>
+                      <div className="text-xs text-slate-600 space-y-1">
+                        <p>
+                          Issued: {item.issuedAt ? new Date(item.issuedAt).toLocaleString() : "N/A"}
+                        </p>
+                        <p>
+                          Follow-up: {item.followUpDate ? new Date(item.followUpDate).toLocaleDateString() : "Not scheduled"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Instructions</p>
+                      <p className="text-sm text-slate-700 mt-1">{item.instructions || "No additional instructions"}</p>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Medicines</p>
+                      {medicines.length === 0 ? (
+                        <p className="text-sm text-slate-600 mt-1">No medicines listed for this prescription.</p>
+                      ) : (
+                        <div className="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                          <table className="w-full text-left text-sm text-slate-700">
+                            <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
+                              <tr>
+                                <th className="px-3 py-2 font-semibold">Medicine</th>
+                                <th className="px-3 py-2 font-semibold">Dosage</th>
+                                <th className="px-3 py-2 font-semibold">Frequency</th>
+                                <th className="px-3 py-2 font-semibold">Duration</th>
+                                <th className="px-3 py-2 font-semibold">Notes</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {medicines.map((medicine, index) => (
+                                <tr key={`${item._id}-${medicine.name || "medicine"}-${index}`} className="border-t border-slate-100 align-top">
+                                  <td className="px-3 py-2 font-medium text-slate-800">{medicine.name || "N/A"}</td>
+                                  <td className="px-3 py-2">{medicine.dosage || "-"}</td>
+                                  <td className="px-3 py-2">{medicine.frequency || "-"}</td>
+                                  <td className="px-3 py-2">{medicine.duration || "-"}</td>
+                                  <td className="px-3 py-2">{medicine.notes || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : null}
 
