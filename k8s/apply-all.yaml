@@ -12,6 +12,7 @@ items:
       CORS_ORIGIN: "http://localhost:3000"
       DOCTOR_SERVICE_URL: "http://doctor-service"
       PATIENT_SERVICE_URL: "http://patient-service"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
       INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
       REQUEST_TIMEOUT_MS: "5000"
   - apiVersion: v1
@@ -30,11 +31,12 @@ items:
     data:
       CORS_ORIGIN: "http://localhost:3000"
       REQUEST_TIMEOUT_MS: "5000"
+      AUTH_SERVICE_URL: "http://auth-service"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
       DOCTOR_SERVICE_URL: "http://doctor-service"
-      PATIENT_SERVICE_URL: "http://patient-service"
       TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
       PAYMENT_SERVICE_URL: "http://payment-service:4006"
-      NOTIFICATION_SERVICE_URL: "http://notification-service:3005"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
   - apiVersion: v1
     kind: Secret
     metadata:
@@ -57,7 +59,7 @@ items:
       TELEMEDICINE_SERVICE_URL: "http://telemedicine-service:4004"
       AI_SERVICE_URL: "http://ai-service:4005"
       TELEMEDICINE_JOIN_BASE_URL: "https://telemedicine.healthlink.local/session"
-      NOTIFICATION_SERVICE_URL: "http://notification-service"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
       REQUEST_TIMEOUT_MS: "5000"
   - apiVersion: v1
     kind: Secret
@@ -97,6 +99,7 @@ items:
       CORS_ORIGIN: "http://localhost:3000"
       JITSI_DOMAIN: "meet.jit.si"
       APPOINTMENT_SERVICE_URL: "http://appointment-service"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
       VERIFY_APPOINTMENT_WITH_SERVICE: "false"
       ALLOW_APPOINTMENT_FALLBACK: "true"
       REQUEST_TIMEOUT_MS: "5000"
@@ -127,7 +130,7 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/ai-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
-      COHERE_API_KEY: "cohereapikey"
+      COHERE_API_KEY: "your_cohere_api_key_here"
   - apiVersion: v1
     kind: ConfigMap
     metadata:
@@ -137,9 +140,41 @@ items:
       CORS_ORIGIN: "http://localhost:3000"
       UPLOAD_PATH: "uploads"
       APPOINTMENT_SERVICE_URL: "http://appointment-service"
+      AUTH_SERVICE_URL: "http://auth-service"
+      INTERNAL_SERVICE_API_KEY: "healthlink-internal-key"
       DOCTOR_SERVICE_URL: "http://doctor-service"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:4007"
       REQUEST_TIMEOUT_MS: "5000"
       DEFAULT_CONSULTATION_FEE: "1000"
+      PAYMENT_OTP_EXPIRY_MINUTES: "10"
+      PAYMENT_OTP_MAX_ATTEMPTS: "5"
+
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: notification-service-config
+    data:
+      PORT: "4007"
+      HOST: "0.0.0.0"
+      CORS_ORIGIN: "http://localhost:3000"
+      AUTH_REQUIRED: "false"
+      ALLOWED_SERVICE_CALLERS: "appointment-service,doctor-service,payment-service,telemedicine-service"
+
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: notification-service-secret
+    type: Opaque
+    stringData:
+      EMAIL_USER: ""
+      EMAIL_PASS: ""
+      EMAIL_FROM: "Smart Healthcare Platform <>"
+      TWILIO_ACCOUNT_SID: ""
+      TWILIO_AUTH_TOKEN: ""
+      TWILIO_PHONE_NUMBER: ""
+      TWILIO_VERIFIED_TO: ""
+      JWT_SECRET: "access_secret_123456789_secure_key_service"
+      MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/notification-db?appName=Cluster0"
   - apiVersion: v1
     kind: Secret
     metadata:
@@ -148,6 +183,5 @@ items:
     stringData:
       MONGO_URI: "mongodb+srv://healthlink:123456Aa@cluster0.5ccblix.mongodb.net/payment-db?appName=Cluster0"
       JWT_SECRET: "access_secret_123456789_secure_key_service"
-      STRIPE_SECRET_KEY: "stripkey"
-      STRIPE_WEBHOOK_SECRET: "whsec_test_webhook_secret"
-
+      STRIPE_SECRET_KEY: "fbfd"
+      STRIPE_WEBHOOK_SECRET: "cvf"
