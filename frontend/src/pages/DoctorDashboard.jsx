@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Check, FilePlus2, LoaderCircle, Settings2, UserRound, Video, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -19,7 +19,7 @@ import { getPaymentsByAppointment } from "../services/paymentService";
 import { extractErrorMessage } from "../services/api";
 import { getUserInfo } from "../utils/auth";
 import { getOrCreateTelemedicineSession, startTelemedicineSession } from "../services/telemedicineService";
-import { notifyCustomBestEffort } from "../services/notificationService";
+import { notifyCustomBestEffort, pushLocalNotification } from "../services/notificationService";
 import { subscribeToAppointmentChanges, watchAppointmentRooms } from "../services/appointmentRealtime";
 
 const defaultSlot = {
@@ -139,6 +139,9 @@ const DoctorDashboard = () => {
   const [selectedPatientForReports, setSelectedPatientForReports] = useState("");
   const [patientReports, setPatientReports] = useState([]);
   const [recentlyChangedAppointments, setRecentlyChangedAppointments] = useState({});
+  const realtimeNotificationDedupRef = useRef({});
+  const appointmentStatusSnapshotRef = useRef({});
+  const appointmentStatusSnapshotReadyRef = useRef(false);
 
   const appointmentById = useMemo(
     () => Object.fromEntries(appointments.map((item) => [String(item._id), item])),
@@ -303,10 +306,54 @@ const DoctorDashboard = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToAppointmentChanges(async (event) => {
+      const appointment = event?.appointment || {};
+      const appointmentId = String(appointment?._id || "").trim();
+      const action = String(event?.action || "updated").trim().toLowerCase();
+      const status = String(appointment?.status || "").trim().toLowerCase();
+      const dedupKey = `${appointmentId}:${action}:${status}`;
+      const now = Date.now();
+      const lastHandledAt = Number(realtimeNotificationDedupRef.current[dedupKey] || 0);
+      const shouldNotify = !lastHandledAt || now - lastHandledAt > 1500;
+
+      realtimeNotificationDedupRef.current[dedupKey] = now;
+
+      Object.entries(realtimeNotificationDedupRef.current).forEach(([key, handledAt]) => {
+        if (now - Number(handledAt) > 10000) {
+          delete realtimeNotificationDedupRef.current[key];
+        }
+      });
+
       const changedAppointmentId = event?.appointment?._id;
       if (changedAppointmentId) {
         markAppointmentAsRecentlyChanged(changedAppointmentId);
       }
+
+      if (shouldNotify && appointmentId) {
+        const actionLabel = {
+          created: "New appointment request received",
+          cancelled: "Appointment cancelled",
+          rescheduled: "Appointment rescheduled",
+          "status-updated": "Appointment status updated"
+        }[action] || "Appointment updated";
+
+        const patientLabel = resolvePatientName(appointment.patientId);
+        const scheduleLabel = appointment?.scheduledAt
+          ? new Date(appointment.scheduledAt).toLocaleString()
+          : "Schedule not available";
+
+        pushLocalNotification({
+          title: actionLabel,
+          message: `${patientLabel} | ${appointment.specialty || "General"} | ${scheduleLabel}`,
+          category: "appointment",
+          status: "sent",
+          dedupKey: appointmentId ? `doctor:${appointmentId}:${action}:${status}` : "",
+          recipients: {
+            doctorEmail: user?.email || null,
+            doctorPhone: user?.phoneNumber || null
+          }
+        });
+      }
+
       await loadData();
     });
 
@@ -334,6 +381,43 @@ const DoctorDashboard = () => {
 
     watchAppointmentRooms(appointments);
   }, [appointments]);
+
+  useEffect(() => {
+    const previousStatuses = appointmentStatusSnapshotRef.current;
+    const nextStatuses = {};
+    const snapshotReady = appointmentStatusSnapshotReadyRef.current;
+
+    (Array.isArray(appointments) ? appointments : []).forEach((appointment) => {
+      const appointmentId = String(appointment?._id || "").trim();
+      if (!appointmentId) {
+        return;
+      }
+
+      const status = String(appointment?.status || "").trim().toLowerCase();
+      nextStatuses[appointmentId] = status;
+
+      if (snapshotReady && status === "pending" && !previousStatuses[appointmentId]) {
+        const patientId = String(appointment?.patientId || "");
+        const patientLabel = patientNameById[patientId] || patientId || "Unknown patient";
+        const scheduleLabel = appointment?.scheduledAt
+          ? new Date(appointment.scheduledAt).toLocaleString()
+          : "Schedule not available";
+
+        pushLocalNotification({
+          title: "New appointment request received",
+          message: `${patientLabel} | ${appointment.specialty || "General"} | ${scheduleLabel}`,
+          category: "appointment",
+          status: "sent",
+          dedupKey: `doctor:${appointmentId}:created:pending`
+        });
+      }
+    });
+
+    appointmentStatusSnapshotRef.current = nextStatuses;
+    if (!snapshotReady) {
+      appointmentStatusSnapshotReadyRef.current = true;
+    }
+  }, [appointments, patientNameById]);
 
   const pendingAppointments = appointments.filter((item) => item.status === "pending");
   const consultationAppointments = appointments.filter((item) => ["confirmed", "completed"].includes(String(item.status || "").toLowerCase()));
@@ -429,6 +513,16 @@ const DoctorDashboard = () => {
     try {
       await acceptAppointment(appointmentId);
       setSuccess("Appointment accepted.");
+      pushLocalNotification({
+        title: "Appointment Accepted",
+        message: `You accepted appointment ${appointmentId}.`,
+        category: "appointment",
+        status: "sent",
+        recipients: {
+          doctorEmail: user?.email || null,
+          doctorPhone: user?.phoneNumber || null
+        }
+      });
       await loadData();
     } catch (err) {
       setError(extractErrorMessage(err, "Could not accept appointment"));
@@ -442,6 +536,16 @@ const DoctorDashboard = () => {
     try {
       await rejectAppointment(appointmentId, "Doctor not available");
       setSuccess("Appointment rejected.");
+      pushLocalNotification({
+        title: "Appointment Rejected",
+        message: `You rejected appointment ${appointmentId}.`,
+        category: "appointment",
+        status: "sent",
+        recipients: {
+          doctorEmail: user?.email || null,
+          doctorPhone: user?.phoneNumber || null
+        }
+      });
       await loadData();
     } catch (err) {
       setError(extractErrorMessage(err, "Could not reject appointment"));
@@ -536,6 +640,16 @@ const DoctorDashboard = () => {
         followUpDate: fromDateTimeLocal(prescription.followUpDate)
       });
       setSuccess("Prescription issued successfully.");
+      pushLocalNotification({
+        title: "Prescription Issued",
+        message: `Prescription has been issued for appointment ${prescription.appointmentId}.`,
+        category: "custom",
+        status: "sent",
+        recipients: {
+          doctorEmail: user?.email || null,
+          doctorPhone: user?.phoneNumber || null
+        }
+      });
       setPrescription(defaultPrescription);
     } catch (err) {
       setError(extractErrorMessage(err, "Could not issue prescription"));

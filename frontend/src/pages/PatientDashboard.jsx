@@ -114,6 +114,9 @@ const PatientDashboard = () => {
   const [slipFile, setSlipFile] = useState(null);
   const [toast, setToast] = useState({ type: "", message: "" });
   const [recentlyChangedAppointments, setRecentlyChangedAppointments] = useState({});
+  const realtimeNotificationDedupRef = useRef({});
+  const appointmentStatusSnapshotRef = useRef({});
+  const appointmentStatusSnapshotReadyRef = useRef(false);
 
   const [profile, setProfile] = useState({
     fullName: user?.fullName || "",
@@ -741,6 +744,33 @@ const PatientDashboard = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToAppointmentChanges(async (event) => {
+      const appointment = event?.appointment || {};
+      const appointmentId = String(appointment?._id || "").trim();
+      const action = String(event?.action || "").trim().toLowerCase();
+      const status = String(appointment?.status || "").trim().toLowerCase();
+
+      if (appointmentId && action === "status-updated" && status === "confirmed") {
+        const dedupKey = `${appointmentId}:${action}:${status}`;
+        const now = Date.now();
+        const lastHandledAt = Number(realtimeNotificationDedupRef.current[dedupKey] || 0);
+
+        if (!lastHandledAt || now - lastHandledAt > 2000) {
+          realtimeNotificationDedupRef.current[dedupKey] = now;
+
+          const scheduleLabel = appointment?.scheduledAt
+            ? new Date(appointment.scheduledAt).toLocaleString()
+            : "your selected date/time";
+
+          pushLocalNotification({
+            title: "Appointment Accepted",
+            message: `Your appointment for ${scheduleLabel} has been accepted by the doctor.`,
+            category: "appointment",
+            status: "sent",
+            dedupKey: `patient:${appointmentId}:status:confirmed`
+          });
+        }
+      }
+
       const changedAppointmentId = event?.appointment?._id;
       if (changedAppointmentId) {
         markAppointmentAsRecentlyChanged(changedAppointmentId);
@@ -771,6 +801,41 @@ const PatientDashboard = () => {
     }
 
     watchAppointmentRooms(appointments);
+  }, [appointments]);
+
+  useEffect(() => {
+    const previousStatuses = appointmentStatusSnapshotRef.current;
+    const nextStatuses = {};
+    const snapshotReady = appointmentStatusSnapshotReadyRef.current;
+
+    (Array.isArray(appointments) ? appointments : []).forEach((appointment) => {
+      const appointmentId = String(appointment?._id || "").trim();
+      if (!appointmentId) {
+        return;
+      }
+
+      const status = String(appointment?.status || "").trim().toLowerCase();
+      nextStatuses[appointmentId] = status;
+
+      if (snapshotReady && status === "confirmed" && previousStatuses[appointmentId] !== "confirmed") {
+        const scheduleLabel = appointment?.scheduledAt
+          ? new Date(appointment.scheduledAt).toLocaleString()
+          : "your selected date/time";
+
+        pushLocalNotification({
+          title: "Appointment Accepted",
+          message: `Your appointment for ${scheduleLabel} has been accepted by the doctor.`,
+          category: "appointment",
+          status: "sent",
+          dedupKey: `patient:${appointmentId}:status:confirmed`
+        });
+      }
+    });
+
+    appointmentStatusSnapshotRef.current = nextStatuses;
+    if (!snapshotReady) {
+      appointmentStatusSnapshotReadyRef.current = true;
+    }
   }, [appointments]);
 
   useEffect(() => {
@@ -807,12 +872,32 @@ const PatientDashboard = () => {
 
       setSuccess("Appointment request submitted successfully.");
       setToast({ type: "success", message: "Appointment request submitted successfully." });
+      pushLocalNotification({
+        title: "Appointment Requested",
+        message: "Your appointment request was submitted successfully.",
+        category: "appointment",
+        status: "sent",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null
+        }
+      });
       setBookingForm({ doctorId: "", specialty: "", scheduledAt: "", durationMinutes: 30, reason: "" });
       await loadDashboard();
       setActiveTab("appointments");
     } catch (err) {
       setError(extractErrorMessage(err, "Could not create appointment"));
       setToast({ type: "error", message: extractErrorMessage(err, "Could not create appointment") });
+      pushLocalNotification({
+        title: "Appointment Request Failed",
+        message: extractErrorMessage(err, "Could not create appointment"),
+        category: "appointment",
+        status: "failed",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null
+        }
+      });
     } finally {
       setBooking(false);
     }
@@ -1273,11 +1358,31 @@ const PatientDashboard = () => {
       await uploadBankSlip(formData);
       setSuccess("Slip uploaded. Waiting for admin verification.");
       setToast({ type: "success", message: "Slip uploaded. Waiting for admin verification." });
+      pushLocalNotification({
+        title: "Payment Slip Uploaded",
+        message: "Your slip was uploaded and is pending verification.",
+        category: "payment",
+        status: "sent",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null
+        }
+      });
       closePaymentModal();
       await loadDashboard();
     } catch (err) {
       setPaymentError(extractErrorMessage(err, "Could not upload payment slip"));
       setToast({ type: "error", message: extractErrorMessage(err, "Could not upload payment slip") });
+      pushLocalNotification({
+        title: "Payment Slip Upload Failed",
+        message: extractErrorMessage(err, "Could not upload payment slip"),
+        category: "payment",
+        status: "failed",
+        recipients: {
+          patientEmail: user?.email || null,
+          patientPhone: profile?.phone || user?.phoneNumber || null
+        }
+      });
     } finally {
       setPaymentBusy(false);
     }

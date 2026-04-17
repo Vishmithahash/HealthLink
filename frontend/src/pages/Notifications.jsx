@@ -1,26 +1,41 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCircle, CircleX, CreditCard, Info, RefreshCw, Video } from 'lucide-react';
+import { Bell, CheckCircle, CircleCheckBig, CircleX, CreditCard, Info, RefreshCw, Trash2, Video } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboardByRole, getUserInfo } from '../utils/auth';
-import { listLocalNotifications, subscribeToLocalNotifications } from '../services/notificationService';
+import {
+    clearLocalNotifications,
+    listLocalNotifications,
+    markLocalNotificationAsRead,
+    subscribeToLocalNotifications
+} from '../services/notificationService';
 
 const Notifications = () => {
     const navigate = useNavigate();
-    const [notifications, setNotifications] = useState([]);
+    const [notifications, setNotifications] = useState(() => listLocalNotifications());
+    const [currentTime, setCurrentTime] = useState(() => Date.now());
 
     const refresh = () => {
         setNotifications(listLocalNotifications());
+        setCurrentTime(Date.now());
     };
 
     useEffect(() => {
-        refresh();
-
         const unsubscribe = subscribeToLocalNotifications(() => {
             refresh();
         });
 
         return () => {
             unsubscribe();
+        };
+    }, []);
+
+    useEffect(() => {
+        const timerId = window.setInterval(() => {
+            setCurrentTime(Date.now());
+        }, 60000);
+
+        return () => {
+            window.clearInterval(timerId);
         };
     }, []);
 
@@ -51,7 +66,7 @@ const Notifications = () => {
             return 'Just now';
         }
 
-        const diffMs = Date.now() - date.getTime();
+        const diffMs = currentTime - date.getTime();
         const diffMin = Math.floor(diffMs / 60000);
         if (diffMin < 1) {
             return 'Just now';
@@ -67,6 +82,16 @@ const Notifications = () => {
         return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
     };
 
+    const handleRead = (notificationId) => {
+        markLocalNotificationAsRead(notificationId);
+        refresh();
+    };
+
+    const handleClearAll = () => {
+        clearLocalNotifications();
+        refresh();
+    };
+
     return (
         <div className="max-w-3xl mx-auto space-y-6">
             <div className="flex items-center justify-between gap-3">
@@ -74,6 +99,9 @@ const Notifications = () => {
                     <Bell className="mr-2 h-6 w-6 text-blue-600" /> Notifications
                 </h1>
                 <div className="inline-flex items-center gap-2">
+                    <span className="inline-flex items-center rounded-full bg-blue-50 border border-blue-200 px-2.5 py-1 text-xs text-blue-700">
+                        {notifications.length} unread
+                    </span>
                     <button
                         type="button"
                         onClick={goBack}
@@ -87,6 +115,14 @@ const Notifications = () => {
                         className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
                     >
                         <RefreshCw className="h-4 w-4" /> Refresh
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleClearAll}
+                        disabled={notifications.length === 0}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Trash2 className="h-4 w-4" /> Clear All
                     </button>
                 </div>
             </div>
@@ -116,6 +152,15 @@ const Notifications = () => {
                                 </div>
                                 <p className="text-sm text-slate-700 mt-0.5">{notif.message}</p>
                                 <p className="text-xs text-slate-500 mt-1">{formatRelative(notif.createdAt)}</p>
+                            </div>
+                            <div className="shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={() => handleRead(notif.id)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-100"
+                                >
+                                    <CircleCheckBig className="h-3.5 w-3.5" /> Read
+                                </button>
                             </div>
                         </div>
                     ))}

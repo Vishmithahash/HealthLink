@@ -39,7 +39,7 @@ const initSocketServer = (httpServer) => {
 
       const payload = jwt.verify(token, env.jwtAccessSecret);
       socket.user = {
-        userId: String(payload.userId || payload.id || "").trim(),
+        userId: String(payload.userId || payload.id || payload.sub || "").trim(),
         role: String(payload.role || "")
       };
 

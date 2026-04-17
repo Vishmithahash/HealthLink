@@ -2,6 +2,7 @@ import { io } from "socket.io-client";
 import { getToken } from "../utils/auth";
 
 let socketInstance = null;
+let socketToken = "";
 const watchedAppointmentIds = new Set();
 
 const getSocketUrl = () => {
@@ -15,13 +16,23 @@ const getSocketUrl = () => {
 const ensureSocket = () => {
   const token = getToken();
   if (!token) {
+    if (socketInstance) {
+      socketInstance.disconnect();
+      socketInstance = null;
+      socketToken = "";
+    }
     return null;
   }
 
+  if (socketInstance && socketToken && socketToken !== token) {
+    socketInstance.disconnect();
+    socketInstance = null;
+  }
+
   if (!socketInstance) {
+    socketToken = token;
     socketInstance = io(getSocketUrl(), {
       path: "/socket.io",
-      transports: ["websocket"],
       autoConnect: false,
       auth: {
         token: `Bearer ${token}`
@@ -37,6 +48,7 @@ const ensureSocket = () => {
       });
     });
   } else {
+    socketToken = token;
     socketInstance.auth = {
       token: `Bearer ${token}`
     };

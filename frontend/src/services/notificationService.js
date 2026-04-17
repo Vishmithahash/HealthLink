@@ -1,25 +1,75 @@
 import { notificationApi, extractData } from "./api";
+import { getUserInfo } from "../utils/auth";
 
-const LOCAL_NOTIFICATION_STORAGE_KEY = "healthlink_notifications";
+const LOCAL_NOTIFICATION_STORAGE_PREFIX = "healthlink_notifications_v2";
 const MAX_LOCAL_NOTIFICATION_ENTRIES = 100;
 const LOCAL_NOTIFICATION_CREATED_EVENT = "healthlink:notification:new";
+const LOCAL_NOTIFICATION_UPDATED_EVENT = "healthlink:notification:updated";
 
-const readLocalNotifications = () => {
+const normalizeText = (value) => String(value || "").trim().toLowerCase();
+
+const getCurrentUser = () => getUserInfo() || null;
+
+const buildUserScopeKey = (user) => {
+  const userId = String(user?.id || user?._id || user?.userId || "").trim();
+  const email = normalizeText(user?.email);
+  const username = normalizeText(user?.username);
+  const role = normalizeText(user?.role) || "unknown";
+
+  if (userId) {
+    return `id:${userId}`;
+  }
+  if (email) {
+    return `email:${email}`;
+  }
+  if (username) {
+    return `username:${username}:${role}`;
+  }
+  return "anonymous";
+};
+
+const getLocalNotificationStorageKey = (user = getCurrentUser()) => {
+  return `${LOCAL_NOTIFICATION_STORAGE_PREFIX}:${buildUserScopeKey(user)}`;
+};
+
+const isNotificationRelevant = (entry, user = getCurrentUser()) => {
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
+
+  const ownerKey = String(entry.ownerUserKey || "").trim();
+  const currentOwnerKey = buildUserScopeKey(user);
+
+  // Notifications are stored in a user-scoped key. Only enforce owner mismatch exclusion.
+  if (ownerKey && ownerKey !== currentOwnerKey) {
+    return false;
+  }
+
+  return true;
+};
+
+const readScopedNotifications = (user = getCurrentUser()) => {
+  const storageKey = getLocalNotificationStorageKey(user);
   try {
-    const raw = localStorage.getItem(LOCAL_NOTIFICATION_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) {
       return [];
     }
 
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((entry) => isNotificationRelevant(entry, user));
   } catch {
     return [];
   }
 };
 
-const writeLocalNotifications = (entries) => {
-  localStorage.setItem(LOCAL_NOTIFICATION_STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_LOCAL_NOTIFICATION_ENTRIES)));
+const writeLocalNotifications = (entries, user = getCurrentUser()) => {
+  const storageKey = getLocalNotificationStorageKey(user);
+  localStorage.setItem(storageKey, JSON.stringify(entries.slice(0, MAX_LOCAL_NOTIFICATION_ENTRIES)));
 };
 
 const emitLocalNotificationCreated = (entry) => {
@@ -30,8 +80,25 @@ const emitLocalNotificationCreated = (entry) => {
   window.dispatchEvent(new CustomEvent(LOCAL_NOTIFICATION_CREATED_EVENT, { detail: entry }));
 };
 
-export const listLocalNotifications = () => {
-  return readLocalNotifications();
+const emitLocalNotificationUpdated = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent(LOCAL_NOTIFICATION_UPDATED_EVENT));
+};
+
+export const listLocalNotifications = ({ includeRead = false } = {}) => {
+  const items = readScopedNotifications();
+  if (includeRead) {
+    return items;
+  }
+
+  return items.filter((entry) => !entry?.readAt);
+};
+
+export const getUnreadLocalNotificationCount = () => {
+  return listLocalNotifications().length;
 };
 
 export const pushLocalNotification = ({
@@ -39,8 +106,21 @@ export const pushLocalNotification = ({
   message,
   category = "custom",
   status = "info",
-  recipients = {}
+  recipients = {},
+  dedupKey = ""
 }) => {
+  const user = getCurrentUser();
+  const ownerUserKey = buildUserScopeKey(user);
+  const normalizedDedupKey = String(dedupKey || "").trim();
+  const existingEntries = readScopedNotifications(user);
+
+  if (normalizedDedupKey) {
+    const existing = existingEntries.find((item) => String(item?.dedupKey || "").trim() === normalizedDedupKey);
+    if (existing) {
+      return existing;
+    }
+  }
+
   const entry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     createdAt: new Date().toISOString(),
@@ -48,6 +128,8 @@ export const pushLocalNotification = ({
     message: message || "",
     category,
     status,
+    dedupKey: normalizedDedupKey || null,
+    ownerUserKey,
     recipients: {
       patientEmail: recipients.patientEmail || null,
       patientPhone: recipients.patientPhone || null,
@@ -58,11 +140,47 @@ export const pushLocalNotification = ({
     }
   };
 
-  const nextEntries = [entry, ...readLocalNotifications()];
-  writeLocalNotifications(nextEntries);
+  const nextEntries = [entry, ...existingEntries];
+  writeLocalNotifications(nextEntries, user);
   emitLocalNotificationCreated(entry);
 
   return entry;
+};
+
+export const markLocalNotificationAsRead = (id) => {
+  if (!id) {
+    return false;
+  }
+
+  const user = getCurrentUser();
+  const items = readScopedNotifications(user);
+  let changed = false;
+
+  const next = items.map((entry) => {
+    if (entry?.id !== id || entry?.readAt) {
+      return entry;
+    }
+
+    changed = true;
+    return {
+      ...entry,
+      readAt: new Date().toISOString()
+    };
+  });
+
+  if (!changed) {
+    return false;
+  }
+
+  writeLocalNotifications(next, user);
+  emitLocalNotificationUpdated();
+  return true;
+};
+
+export const clearLocalNotifications = () => {
+  const user = getCurrentUser();
+  writeLocalNotifications([], user);
+  emitLocalNotificationUpdated();
 };
 
 export const subscribeToLocalNotifications = (callback) => {
@@ -71,11 +189,19 @@ export const subscribeToLocalNotifications = (callback) => {
   }
 
   const handleCreated = (event) => {
-    callback(event?.detail || null);
+    const entry = event?.detail || null;
+    if (isNotificationRelevant(entry)) {
+      callback(entry);
+    }
+  };
+
+  const handleUpdated = () => {
+    callback(null);
   };
 
   const handleStorage = (event) => {
-    if (event.key !== LOCAL_NOTIFICATION_STORAGE_KEY) {
+    const storageKey = getLocalNotificationStorageKey();
+    if (event.key !== storageKey) {
       return;
     }
 
@@ -84,10 +210,12 @@ export const subscribeToLocalNotifications = (callback) => {
   };
 
   window.addEventListener(LOCAL_NOTIFICATION_CREATED_EVENT, handleCreated);
+  window.addEventListener(LOCAL_NOTIFICATION_UPDATED_EVENT, handleUpdated);
   window.addEventListener("storage", handleStorage);
 
   return () => {
     window.removeEventListener(LOCAL_NOTIFICATION_CREATED_EVENT, handleCreated);
+    window.removeEventListener(LOCAL_NOTIFICATION_UPDATED_EVENT, handleUpdated);
     window.removeEventListener("storage", handleStorage);
   };
 };
