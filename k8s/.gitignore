@@ -1,4 +1,2 @@
-ai-secret.yaml
-notification-secret.yaml
+*secret*.yaml
 apply-all.yaml
-payment-secret.yaml

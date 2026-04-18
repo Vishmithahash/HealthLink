@@ -1,3 +1,14 @@
+# Environment files (local secrets)
+**/.env
+**/.env.local
+**/.env.development
+**/.env.test
+**/.env.production
+
+# Kubernetes secret manifests
+/k8s/*secret*.yaml
+/k8s/apply-all.yaml
+
+# Explicit high-risk files
 /ai-service/.env
 /k8s/ai-secret.yaml
-/k8s/apply-all.yaml
