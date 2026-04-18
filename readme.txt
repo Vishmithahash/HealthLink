@@ -24,7 +24,7 @@ This document contains the deployment steps for the submitted deliverables.
   ai-service/.env
   payment-service/.env
   notification-service/.env
-- Update secrets/keys (JWT, DB, Stripe, Twilio, Cohere, email) with valid values for your environment.
+- Update secrets/keys (JWT, DB, Stripe, smsAPI.lk, Cohere, email) with valid values for your environment.
 
 4. Deploy backend services (Docker Compose)
 - From the project root, run:

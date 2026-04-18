@@ -2,10 +2,9 @@ const { sendEmail } = require("../services/mailerService");
 const { renderTemplate, getDefaultSubject, renderSmsTemplate } = require("../services/templateService");
 const {
   normalizePhone,
-  hasTwilioConfig,
-  isVerifiedTwilioRecipient,
+  hasSmsApiConfig,
   sendSms
-} = require("../services/twilioService");
+} = require("../services/smsApiService");
 const { withSendProtection } = require("../services/sendProtectionService");
 const NotificationLog = require("../models/NotificationLog");
 
@@ -150,7 +149,7 @@ const extractSmsRecipients = (payload) => {
 };
 
 const dispatchSmsNotification = async ({ payload, templateType }) => {
-  if (!hasTwilioConfig()) {
+  if (!hasSmsApiConfig()) {
     return {
       enabled: false,
       sentCount: 0,
@@ -174,15 +173,6 @@ const dispatchSmsNotification = async ({ payload, templateType }) => {
 
   const results = await Promise.allSettled(
     recipients.map(async (recipient) => {
-      if (!isVerifiedTwilioRecipient(recipient.phone)) {
-        return {
-          phone: recipient.phone,
-          role: recipient.role,
-          status: "skipped",
-          reason: "Recipient phone is not verified for this Twilio trial account"
-        };
-      }
-
       const body = renderSmsTemplate(templateType, payload, recipient);
       const protectedSend = await withSendProtection({
         channel: "sms",
@@ -206,8 +196,8 @@ const dispatchSmsNotification = async ({ payload, templateType }) => {
       const message = protectedSend.result;
 
       console.info(
-        `[notification-service] Sent ${templateType} sms to ${recipient.phone} as ${recipient.role}. sid=${
-          message.sid || "n/a"
+        `[notification-service] Sent ${templateType} sms to ${recipient.phone} as ${recipient.role}. messageId=${
+          message.messageId || "n/a"
         }`
       );
 
@@ -215,7 +205,7 @@ const dispatchSmsNotification = async ({ payload, templateType }) => {
         phone: recipient.phone,
         role: recipient.role,
         status: "sent",
-        sid: message.sid || null
+        messageId: message.messageId || null
       };
     })
   );
@@ -229,7 +219,7 @@ const dispatchSmsNotification = async ({ payload, templateType }) => {
       phone: recipients[index].phone,
       role: recipients[index].role,
       status: "failed",
-      error: result.reason && result.reason.message ? result.reason.message : "Twilio send failed"
+      error: result.reason && result.reason.message ? result.reason.message : "SMS send failed"
     };
   });
 

@@ -1,10 +1,11 @@
 # Notification Service
 
-Notification microservice for HealthLink that is responsible only for sending email notifications to patients and doctors.
+Notification microservice for HealthLink that sends both email and SMS notifications to patients and doctors.
 
 ## Features
 
 - Gmail SMTP integration via Nodemailer
+- SMS integration via smsAPI.lk
 - Template-based emails
 - Generic send-email API for flexible payloads
 - Purpose-specific APIs for key workflows
@@ -23,6 +24,14 @@ Notification microservice for HealthLink that is responsible only for sending em
    npm run dev
 
 Service runs on `http://localhost:4007`.
+
+## SMS Settings
+
+Set the following variables in `.env` to enable SMS delivery:
+
+- `SMS_SENDER_ID` (example: `SMSAPI Demo`)
+- `SMS_BASE_URL` (example: `https://dashboard.smsapi.lk/api/v3`)
+- `SMS_AUTH_TOKEN` (your smsAPI.lk auth token)
 
 ## API Endpoints
 
