@@ -184,7 +184,6 @@ const PatientDashboard = () => {
   }, [doctors, bookingForm.doctorId]);
 
   const filteredDoctorCount = doctorOptions.length;
-  const hasActiveDoctorFilters = Boolean(doctorFilters.name || doctorFilters.specialty || doctorFilters.availability);
 
   const parseTimeToMinutes = (value) => {
     const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
@@ -549,7 +548,6 @@ const PatientDashboard = () => {
     return new Map(entries);
   }, [doctors]);
 
-<<<<<<< HEAD
   const markAppointmentAsRecentlyChanged = (appointmentId) => {
     const normalizedId = String(appointmentId || "").trim();
     if (!normalizedId) {
@@ -566,7 +564,7 @@ const PatientDashboard = () => {
     const changedAt = recentlyChangedAppointments[String(appointmentId || "")];
     return Number.isFinite(changedAt) && Date.now() - changedAt < 5000;
   };
-=======
+
   const appointmentsByLatestBooking = useMemo(() => {
     const toMs = (value) => {
       const time = new Date(value || 0).getTime();
@@ -582,7 +580,6 @@ const PatientDashboard = () => {
       return toMs(b?.scheduledAt) - toMs(a?.scheduledAt);
     });
   }, [appointments]);
->>>>>>> origin/dev_danuka
 
   const reportConsultationOptions = useMemo(() => {
     return (Array.isArray(appointments) ? appointments : [])
@@ -1724,7 +1721,8 @@ const PatientDashboard = () => {
 
       {!accountRestricted && activeTab === "appointments" ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="min-w-full">
+          <div className="overflow-x-auto">
+          <table className="min-w-[980px] w-full">
             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-4 py-3">Doctor</th>
@@ -1765,7 +1763,7 @@ const PatientDashboard = () => {
                       <span className="px-2 py-1 rounded-full text-xs bg-slate-100 text-slate-700">{paymentStatus}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="inline-flex gap-2 items-center">
+                      <div className="inline-flex gap-2 items-center flex-wrap justify-end">
                         {canPay ? (
                           <button
                             onClick={() => openPaymentModal(appointment)}
@@ -1796,12 +1794,12 @@ const PatientDashboard = () => {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {paymentModal ? createPortal(paymentModal, document.body) : null}
 
-<<<<<<< HEAD
       {!accountRestricted && activeTab === "book" ? (
         <form onSubmit={handleBookAppointment} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-2xl">
           <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Book Appointment</h2>
@@ -1825,20 +1823,6 @@ const PatientDashboard = () => {
                   value={doctorFilters.name}
                   onChange={(e) => setDoctorFilters((prev) => ({ ...prev, name: e.target.value }))}
                   className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
-=======
-      {activeTab === "book" ? (
-        <div className="max-w-5xl mx-auto space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-            <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Find Doctor</h2>
-            <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_1fr_1fr_auto] gap-3 items-end">
-              <div>
-                <label className="text-sm text-slate-700">Filter by doctor name</label>
-                <input
-                  value={doctorFilters.name}
-                  onChange={(e) => setDoctorFilters((prev) => ({ ...prev, name: e.target.value }))}
-                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-                  placeholder="Type doctor name"
->>>>>>> origin/dev_danuka
                 />
               </div>
               <div>
@@ -1846,11 +1830,7 @@ const PatientDashboard = () => {
                 <select
                   value={doctorFilters.specialty}
                   onChange={(e) => setDoctorFilters((prev) => ({ ...prev, specialty: e.target.value }))}
-<<<<<<< HEAD
                   className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2 bg-white"
-=======
-                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
->>>>>>> origin/dev_danuka
                 >
                   <option value="">All specializations</option>
                   {specialties.map((specialty) => (
@@ -1858,7 +1838,6 @@ const PatientDashboard = () => {
                   ))}
                 </select>
               </div>
-<<<<<<< HEAD
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
               <div>
@@ -1961,101 +1940,6 @@ const PatientDashboard = () => {
           </button>
           </fieldset>
         </form>
-=======
-              <div>
-                <label className="text-sm text-slate-700">Filter by availability</label>
-                <input
-                  type="datetime-local"
-                  value={doctorFilters.availability}
-                  onChange={(e) => setDoctorFilters((prev) => ({ ...prev, availability: e.target.value }))}
-                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setDoctorFilters({ name: "", specialty: "", availability: "" })}
-                className="text-sm text-teal-700 hover:text-teal-800 xl:mb-1"
-              >
-                Reset filters
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <p className="text-slate-500">
-              Showing {doctorOptions.length} doctor{doctorOptions.length === 1 ? "" : "s"}. If filters return one doctor, it is auto-selected in the booking form.
-              </p>
-              {hasActiveDoctorFilters && doctorOptions.length > 1 ? (
-                <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">
-                  Multiple matches found. Please select one doctor in booking form.
-                </span>
-              ) : null}
-              <span className="inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-teal-700">
-                Selected: {selectedDoctor ? `${selectedDoctor.fullName} - ${selectedDoctor.specialization}` : "No doctor selected"}
-              </span>
-            </div>
-          </div>
-
-          <form onSubmit={handleBookAppointment} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4 max-w-2xl mx-auto">
-            <h2 className="text-lg font-semibold text-slate-900 inline-flex items-center gap-2"><Stethoscope className="h-5 w-5 text-teal-700" /> Book Appointment</h2>
-            {bookingRestricted ? (
-              <p className="text-sm text-rose-700 rounded-md border border-rose-200 bg-rose-50 px-3 py-2">
-                Booking is disabled while your account is {patientAccountStatus}. Contact support to reactivate your account.
-              </p>
-            ) : null}
-            <fieldset disabled={bookingRestricted} className="space-y-4 disabled:opacity-60">
-              <div>
-                <label className="text-sm text-slate-700">Doctor</label>
-                <select
-                  required
-                  value={bookingForm.doctorId}
-                  onChange={(e) => onDoctorChange(e.target.value)}
-                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-                >
-                  <option value="">{loadingDoctors ? "Loading doctors..." : "Select doctor"}</option>
-                  {doctorOptions.map((doctor) => (
-                    <option key={doctor.id} value={doctor.id}>{doctor.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-sm text-slate-700">Date and Time</label>
-                <input
-                  required
-                  type="datetime-local"
-                  value={bookingForm.scheduledAt}
-                  onChange={(e) => setBookingForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
-                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-                />
-                <p className="mt-1 text-xs text-slate-500">{bookingAvailabilityHint}</p>
-              </div>
-              <div>
-                <label className="text-sm text-slate-700">Duration (minutes)</label>
-                <input
-                  type="number"
-                  min="10"
-                  max="180"
-                  value={bookingForm.durationMinutes}
-                  onChange={(e) => setBookingForm((prev) => ({ ...prev, durationMinutes: Number(e.target.value || 30) }))}
-                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-slate-700">Reason</label>
-                <textarea
-                  rows={3}
-                  value={bookingForm.reason}
-                  onChange={(e) => setBookingForm((prev) => ({ ...prev, reason: e.target.value }))}
-                  className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
-                  placeholder="Briefly describe symptoms"
-                />
-              </div>
-              <button disabled={booking} type="submit" className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">
-                {booking ? "Submitting..." : "Submit Appointment"}
-              </button>
-            </fieldset>
-          </form>
-        </div>
->>>>>>> origin/dev_danuka
       ) : null}
 
       {!accountRestricted && activeTab === "profile" ? (
@@ -2148,7 +2032,7 @@ const PatientDashboard = () => {
             </div>
             <div>
               <label className="text-sm text-slate-700">Report file</label>
-              <div className="mt-1 flex items-center gap-3">
+              <div className="mt-1 flex items-center gap-3 flex-wrap">
                 <input
                   ref={reportFileInputRef}
                   type="file"
@@ -2163,7 +2047,7 @@ const PatientDashboard = () => {
                 >
                   Choose File
                 </button>
-                <span className="text-sm text-slate-500">{file?.name || "No file chosen"}</span>
+                <span className="text-sm text-slate-500 break-all">{file?.name || "No file chosen"}</span>
               </div>
             </div>
             <button disabled={uploading || !file} type="submit" className="bg-teal-700 hover:bg-teal-800 text-white rounded-md px-4 py-2">{uploading ? "Uploading..." : "Upload"}</button>
@@ -2194,13 +2078,8 @@ const PatientDashboard = () => {
         </div>
       ) : null}
 
-<<<<<<< HEAD
-      {!accountRestricted && activeTab === "prescriptions" ? (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-=======
       {activeTab === "prescriptions" ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-6">
->>>>>>> origin/dev_danuka
           <h2 className="font-semibold text-slate-900 inline-flex items-center gap-2"><FileText className="h-5 w-5 text-teal-700" /> Prescriptions</h2>
 
           {prescriptions.length === 0 ? (
@@ -2278,7 +2157,7 @@ const PatientDashboard = () => {
       ) : null}
 
       {toast.message ? (
-        <div className="fixed top-20 right-4 z-80">
+        <div className="fixed top-20 left-2 right-2 sm:left-auto sm:right-4 z-80">
           <div className={`rounded-lg px-4 py-3 shadow-lg border text-sm ${toast.type === "error" ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-emerald-50 border-emerald-200 text-emerald-700"}`}>
             {toast.message}
           </div>

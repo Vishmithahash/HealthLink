@@ -69,7 +69,7 @@ const NotificationToaster = () => {
   }
 
   return (
-    <div className="fixed right-4 top-20 z-90 w-full max-w-sm space-y-2">
+    <div className="fixed left-2 right-2 top-20 z-90 w-auto sm:left-auto sm:right-4 sm:w-full sm:max-w-sm space-y-2">
       {toasts.map((toast) => (
         <div
           key={toast.id}

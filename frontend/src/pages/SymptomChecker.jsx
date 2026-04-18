@@ -363,7 +363,7 @@ const SymptomChecker = () => {
                     onClick={closeHistoryModal}
                 >
                     <div
-                        className="w-full max-w-2xl my-8 mx-auto rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+                        className="w-full max-w-2xl max-h-[88vh] my-8 mx-auto rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
                         onClick={(event) => event.stopPropagation()}
                     >
                         <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-4 bg-slate-50">
@@ -381,7 +381,7 @@ const SymptomChecker = () => {
                             </button>
                         </div>
 
-                        <div className="p-5 space-y-4">
+                        <div className="p-5 space-y-4 overflow-y-auto max-h-[calc(88vh-74px)]">
                             {loadingHistoryDetail ? (
                                 <p className="text-sm text-slate-600 inline-flex items-center gap-2"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading full record...</p>
                             ) : null}

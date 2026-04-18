@@ -243,7 +243,7 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, otpMeta, onSendOt
                     </div>
                 </div>
                 <div className="mt-6 h-8 w-12 rounded-md bg-white/25" />
-                <p className="mt-6 text-xl md:text-2xl tracking-[0.12em] font-semibold">
+                <p className="mt-6 text-lg sm:text-xl md:text-2xl tracking-[0.08em] font-semibold break-all">
                     {formatCardNumber(cardNumber) || "0000 0000 0000 0000"}
                 </p>
                 <div className="mt-4 flex items-end justify-between">
@@ -380,7 +380,7 @@ const PaymentForm = ({ amount, currency = "LKR", clientSecret, otpMeta, onSendOt
                                 className="w-full mt-1 border border-slate-300 rounded-md px-3 py-2"
                             />
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2">
                             <button
                                 type="submit"
                                 disabled={processing}

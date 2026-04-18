@@ -899,8 +899,8 @@ const DoctorDashboard = () => {
         </div>
       ) : null}
 
-      <div className="border-b border-slate-200">
-        <nav className="-mb-px flex gap-5 text-sm font-medium">
+      <div className="border-b border-slate-200 overflow-x-auto">
+        <nav className="-mb-px flex gap-5 min-w-max text-sm font-medium">
           <button onClick={() => setActiveTab("requests")} className={`py-3 border-b-2 ${activeTab === "requests" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Requests</button>
           <button onClick={() => setActiveTab("consultations")} className={`py-3 border-b-2 ${activeTab === "consultations" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Consultations</button>
           <button onClick={() => setActiveTab("profile")} className={`py-3 border-b-2 ${activeTab === "profile" ? "text-teal-700 border-teal-700" : "text-slate-500 border-transparent"}`}>Profile</button>
@@ -916,7 +916,8 @@ const DoctorDashboard = () => {
 
       {activeTab === "requests" ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="min-w-full">
+          <div className="overflow-x-auto">
+          <table className="min-w-[920px] w-full">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500 text-left">
               <tr>
                 <th className="px-4 py-3">Patient</th>
@@ -951,12 +952,14 @@ const DoctorDashboard = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {activeTab === "consultations" ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="min-w-full">
+          <div className="overflow-x-auto">
+          <table className="min-w-[980px] w-full">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500 text-left">
               <tr>
                 <th className="px-4 py-3">Patient</th>
@@ -1006,6 +1009,7 @@ const DoctorDashboard = () => {
               ))}
             </tbody>
           </table>
+          </div>
 
           {selectedPatientForReports ? (
             <div className="border-t border-slate-200 p-4 bg-slate-50">
@@ -1181,7 +1185,8 @@ const DoctorDashboard = () => {
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <table className="min-w-full">
+            <div className="overflow-x-auto">
+            <table className="min-w-[860px] w-full">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500 text-left">
                 <tr>
                   <th className="px-4 py-3">Patient</th>
@@ -1209,6 +1214,7 @@ const DoctorDashboard = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       ) : null}

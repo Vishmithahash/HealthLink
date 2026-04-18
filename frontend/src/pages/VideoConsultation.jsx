@@ -206,24 +206,24 @@ const VideoConsultation = () => {
     }
 
     return (
-        <div className="flex flex-col h-[85vh] bg-slate-50 relative rounded-2xl overflow-hidden shadow-lg border border-slate-200 animate-fade-in">
-            <div className="bg-white px-6 py-4 border-b border-slate-200 flex items-center justify-between shadow-sm z-10">
-                <div className="flex items-center space-x-3">
+        <div className="flex flex-col h-[78vh] sm:h-[85vh] bg-slate-50 relative rounded-2xl overflow-hidden shadow-lg border border-slate-200 animate-fade-in">
+            <div className="bg-white px-4 sm:px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm z-10">
+                <div className="flex items-center space-x-3 min-w-0">
                     <div className="bg-blue-100 p-2 rounded-lg">
                         <Video className="h-6 w-6 text-blue-600" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                         <h2 className="text-xl font-bold text-slate-800">Secure Telemedicine Session</h2>
                         <p className="text-sm font-medium text-slate-500 flex items-center">
                             <span className="w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse"></span>
-                            Live room: {session.roomName}
+                            <span className="truncate">Live room: {session.roomName}</span>
                         </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex w-full sm:w-auto flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <button
                         onClick={handleLeave}
-                        className="flex items-center text-sm font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-md transition-shadow shadow-sm hover:shadow"
+                        className="flex items-center justify-center text-sm font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-md transition-shadow shadow-sm hover:shadow"
                     >
                         <ArrowLeft className="h-4 w-4 mr-2" /> Leave
                     </button>
@@ -231,7 +231,7 @@ const VideoConsultation = () => {
                         <button
                             onClick={handleEndAndLeave}
                             disabled={ending || session.status === 'completed'}
-                            className="flex items-center text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:bg-slate-400 px-4 py-2 rounded-md transition-shadow shadow-sm hover:shadow"
+                            className="flex items-center justify-center text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:bg-slate-400 px-4 py-2 rounded-md transition-shadow shadow-sm hover:shadow"
                         >
                             <PhoneOff className="h-4 w-4 mr-2" /> {ending ? 'Ending...' : 'End Session'}
                         </button>

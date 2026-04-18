@@ -182,14 +182,14 @@ const Home = () => {
       <header className="home-hero relative overflow-hidden border-b border-teal-900/40">
         <div className="absolute inset-0 home-hero-glow pointer-events-none" aria-hidden="true" />
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-8">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <Link to="/" className="inline-flex items-center gap-2 text-white">
               <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-teal-700 text-white shadow-sm">
                 <HeartPulse className="h-5 w-5" />
               </span>
               <span className="text-xl font-extrabold tracking-tight">HealthLink</span>
             </Link>
-            <div className="flex items-center gap-3">
+            <div className="flex w-full sm:w-auto items-center justify-end gap-3">
               <Link
                 to="/register"
                 className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-200 hover:text-white"
@@ -212,7 +212,7 @@ const Home = () => {
                 <Activity className="h-3.5 w-3.5" />
                 Connected Care Platform
               </p>
-              <h1 className="mt-4 text-4xl md:text-5xl leading-tight font-black tracking-tight text-white">
+              <h1 className="mt-4 text-3xl sm:text-4xl md:text-5xl leading-tight font-black tracking-tight text-white">
                 Start Your Care Journey
                 <span className="block text-teal-300">Before You Log In</span>
               </h1>
@@ -466,7 +466,7 @@ const Home = () => {
             className="absolute inset-0 bg-slate-900/70"
             onClick={() => setSelectedDoctor(null)}
           />
-          <div className="relative w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
+          <div className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
               <div>
                 <h3 className="text-xl font-bold text-slate-900">{selectedDoctor.fullName || "Doctor"}</h3>

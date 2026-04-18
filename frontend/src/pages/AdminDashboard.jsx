@@ -356,7 +356,8 @@ const AdminDashboard = () => {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <table className="min-w-full">
+        <div className="overflow-x-auto">
+        <table className="min-w-[980px] w-full">
           <thead className="bg-slate-50 text-xs uppercase text-slate-500 text-left">
             <tr>
               <th className="px-4 py-3">Doctor</th>
@@ -475,6 +476,7 @@ const AdminDashboard = () => {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

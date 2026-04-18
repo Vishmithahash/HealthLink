@@ -94,11 +94,11 @@ const Notifications = () => {
 
     return (
         <div className="max-w-3xl mx-auto space-y-6">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <h1 className="text-2xl font-bold text-slate-800 flex items-center">
                     <Bell className="mr-2 h-6 w-6 text-blue-600" /> Notifications
                 </h1>
-                <div className="inline-flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center rounded-full bg-blue-50 border border-blue-200 px-2.5 py-1 text-xs text-blue-700">
                         {notifications.length} unread
                     </span>
@@ -132,7 +132,7 @@ const Notifications = () => {
                     {notifications.length === 0 ? (
                         <div className="p-4 text-sm text-slate-500">No frontend notification events yet.</div>
                     ) : notifications.map((notif) => (
-                        <div key={notif.id} className="p-4 hover:bg-slate-50 transition-colors flex items-start space-x-4">
+                        <div key={notif.id} className="p-4 hover:bg-slate-50 transition-colors flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-4">
                             <div className="shrink-0 mt-1">
                                 {iconByCategory[notif.category] || <Bell className="h-5 w-5 text-slate-500" />}
                             </div>
@@ -153,7 +153,7 @@ const Notifications = () => {
                                 <p className="text-sm text-slate-700 mt-0.5">{notif.message}</p>
                                 <p className="text-xs text-slate-500 mt-1">{formatRelative(notif.createdAt)}</p>
                             </div>
-                            <div className="shrink-0">
+                            <div className="shrink-0 sm:self-start">
                                 <button
                                     type="button"
                                     onClick={() => handleRead(notif.id)}
